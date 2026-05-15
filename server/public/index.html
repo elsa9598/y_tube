@@ -48,18 +48,18 @@
 <body>
 <div class="wrap">
   <h1>오둥이 하루</h1>
-  <div class="sub">mp4 + JSON 첨부 → 16:9 렌더링 → 유튜브 업로드</div>
+  <div class="sub">mp4 + lyrics.lrc 첨부 → 16:9 렌더링 → 유튜브 업로드</div>
 
   <!-- STEP 1: 자산 -->
   <div class="card" id="cardPick">
     <div class="step">STEP 01 · 에셋</div>
     <div class="drop" id="drop">
-      <b>여기에 mp4 + JSON 파일을 끌어다 놓거나</b><br/>클릭해서 선택
-      <input id="file" type="file" accept=".mp4,.json" multiple class="hide" />
+      <b>여기에 mp4 + lyrics.lrc 파일을 끌어다 놓거나</b><br/>클릭해서 선택
+      <input id="file" type="file" accept=".mp4,.lrc" multiple class="hide" />
     </div>
     <div class="files">
       <div class="pill" id="pMp4">mp4 — 미선택</div>
-      <div class="pill" id="pJson">JSON — 미선택</div>
+      <div class="pill" id="pLrc">lrc — 미선택</div>
     </div>
     <div style="margin-top:16px">
       <button id="btnRender" disabled>렌더링 시작</button>
@@ -101,7 +101,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let mp4File = null, jsonFile = null, jobId = null;
+let mp4File = null, lrcFile = null, jobId = null;
 
 /* ---- 파일 선택 ---- */
 const drop = $("drop"), fileInput = $("file");
@@ -114,18 +114,24 @@ fileInput.addEventListener("change", () => handleFiles(fileInput.files));
 function handleFiles(list){
   for(const f of list){
     if(f.name.toLowerCase().endsWith(".mp4")) mp4File = f;
-    else if(f.name.toLowerCase().endsWith(".json")) jsonFile = f;
+    else if(f.name.toLowerCase().endsWith(".lrc")) lrcFile = f;
   }
   $("pMp4").textContent = mp4File ? "mp4 · " + mp4File.name : "mp4 — 미선택";
   $("pMp4").classList.toggle("ok", !!mp4File);
-  $("pJson").textContent = jsonFile ? "JSON · " + jsonFile.name : "JSON — 미선택";
-  $("pJson").classList.toggle("ok", !!jsonFile);
-  $("btnRender").disabled = !(mp4File && jsonFile);
-  /* JSON에서 제목 미리 추출 */
-  if(jsonFile){
+  $("pLrc").textContent = lrcFile ? "lrc · " + lrcFile.name : "lrc — 미선택";
+  $("pLrc").classList.toggle("ok", !!lrcFile);
+  $("btnRender").disabled = !(mp4File && lrcFile);
+  /* 제목 미리보기: LRC [ti:] 태그 → 없으면 mp4 파일명 */
+  if(lrcFile){
     const r = new FileReader();
-    r.onload = () => { try{ const o=JSON.parse(r.result); if(o.title) $("title").value=o.title; }catch(e){} };
-    r.readAsText(jsonFile);
+    r.onload = () => {
+      const m = String(r.result).match(/\[ti:([^\]]+)\]/i);
+      if(m) $("title").value = m[1].trim();
+      else if(mp4File) $("title").value = mp4File.name.replace(/\.mp4$/i,"").replace(/_/g," ");
+    };
+    r.readAsText(lrcFile);
+  } else if(mp4File && !$("title").value){
+    $("title").value = mp4File.name.replace(/\.mp4$/i,"").replace(/_/g," ");
   }
 }
 
@@ -135,7 +141,7 @@ $("btnRender").onclick = async () => {
   $("cardRender").classList.remove("hide");
   const fd = new FormData();
   fd.append("mp4", mp4File);
-  fd.append("json", jsonFile);
+  fd.append("lrc", lrcFile);
   const r = await fetch("/render", { method:"POST", body:fd });
   const j = await r.json();
   if(!j.jobId){ $("rMsg").textContent = "오류: "+JSON.stringify(j); return; }

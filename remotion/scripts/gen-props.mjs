@@ -115,6 +115,7 @@ function parseArgs(argv) {
     const k = argv[i];
     if (k === "--folder") a.folder = argv[++i];
     else if (k === "--mp4") a.mp4 = argv[++i];
+    else if (k === "--lrc") a.lrc = argv[++i];
     else if (k === "--json") a.json = argv[++i];
     else if (k === "--out") a.out = argv[++i];
     else if (!k.startsWith("--") && !a.folder && !a.mp4) a.folder = k; // 하위호환: 첫 위치인자=폴더
@@ -131,8 +132,18 @@ let mp4SrcPath;
 let lrcText;
 let title;
 
-if (args.mp4 && args.json) {
-  /* ===== 모드 2: mp4 + JSON ===== */
+if (args.mp4 && args.lrc) {
+  /* ===== 모드 2: mp4 + lyrics.lrc (사장님 실제 워크플로우) ===== */
+  mp4SrcPath = resolve(args.mp4);
+  lrcText = readFileSync(resolve(args.lrc), "utf8");
+  /* 제목: LRC [ti:...] 태그 우선 → 없으면 mp4 파일명(_→공백) */
+  const tiMatch = lrcText.match(/\[ti:([^\]]+)\]/i);
+  title = tiMatch
+    ? tiMatch[1].trim()
+    : basename(mp4SrcPath, ".mp4").replace(/_/g, " ").trim();
+  imageSrcPath = null; // mp4 첫 프레임에서 추출
+} else if (args.mp4 && args.json) {
+  /* ===== 모드 3: mp4 + JSON (lyrics 필드 포함 형식, 하위호환) ===== */
   mp4SrcPath = resolve(args.mp4);
   const meta = await loadMeta(resolve(args.json));
   if (!meta || typeof meta.lyrics !== "string") {
@@ -141,7 +152,7 @@ if (args.mp4 && args.json) {
   }
   lrcText = meta.lyrics;
   title = (meta.title ?? basename(mp4SrcPath, ".mp4")).toString();
-  imageSrcPath = null; // mp4 첫 프레임에서 추출
+  imageSrcPath = null;
 } else if (args.folder) {
   /* ===== 모드 1: 곡 폴더 ===== */
   const folder = resolve(args.folder);
@@ -204,7 +215,9 @@ const props = {
 writeFileSync(outPath, JSON.stringify(props, null, 2), "utf8");
 
 console.log(`✅ 생성: ${outPath}`);
-console.log(`   모드: ${args.mp4 ? "mp4+JSON" : "곡폴더"}`);
+console.log(
+  `   모드: ${args.lrc ? "mp4+lrc" : args.json ? "mp4+JSON" : "곡폴더"}`
+);
 console.log(`   오디오: ${mp4SrcPath}`);
 console.log(
   `   이미지: ${imageSrcPath && existsSync(imageSrcPath) ? imageSrcPath : "(mp4 첫 프레임 추출)"}`

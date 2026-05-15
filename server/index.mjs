@@ -76,7 +76,7 @@ async function processNext() {
   }
   const dir = join(JOBS_DIR, id);
   const mp4Path = join(dir, "audio.mp4");
-  const jsonPath = join(dir, "meta.json");
+  const lrcPath = join(dir, "lyrics.lrc");
   const propsPath = join(dir, "props.json");
   const outPath = join(dir, "output.mp4");
 
@@ -90,8 +90,8 @@ async function processNext() {
         "scripts/gen-props.mjs",
         "--mp4",
         mp4Path,
-        "--json",
-        jsonPath,
+        "--lrc",
+        lrcPath,
         "--out",
         propsPath,
       ],
@@ -210,32 +210,26 @@ app.get("/health", (_req, res) => {
  * POST /render
  *   multipart fields:
  *     - mp4  (file, required)
- *     - json (file OR plain text; 둘 다 허용)
+ *     - lrc  (file, required) — lyrics.lrc 표준 LRC
  *   응답: { jobId, state }
  */
 app.post(
   "/render",
   upload.fields([
     { name: "mp4", maxCount: 1 },
-    { name: "json", maxCount: 1 },
+    { name: "lrc", maxCount: 1 },
   ]),
   (req, res) => {
     const mp4File = req.files?.mp4?.[0];
-    const jsonFile = req.files?.json?.[0];
+    const lrcFile = req.files?.lrc?.[0];
     if (!mp4File) return res.status(400).json({ error: "mp4 파일 누락" });
-    if (!jsonFile && !req.body?.json) {
-      return res.status(400).json({ error: "json 누락 (파일 또는 body.json 텍스트)" });
-    }
+    if (!lrcFile) return res.status(400).json({ error: "lrc 파일 누락" });
 
     const id = randomUUID();
     const dir = join(JOBS_DIR, id);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "audio.mp4"), mp4File.buffer);
-    if (jsonFile) {
-      writeFileSync(join(dir, "meta.json"), jsonFile.buffer);
-    } else {
-      writeFileSync(join(dir, "meta.json"), String(req.body.json), "utf8");
-    }
+    writeFileSync(join(dir, "lyrics.lrc"), lrcFile.buffer);
 
     jobs.set(id, {
       state: "queued",
