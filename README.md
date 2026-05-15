@@ -78,11 +78,27 @@ Cartoon-Music: 이미지 + MP3 + LRC → MP4 → 유튜브 업로드 Flutter 앱
 25. ✅ `flutter analyze` error 0 — 발견·수정한 기존 버그: nav_shell `jumpTo`가 private state에 있어 호출 불가 → `NavShell`로 이동 / `theme.dart` `CardTheme`→`CardThemeData` (Flutter 3.41.9)
 26. ✅ **Phase 3 완료** — `youtube_uploader.dart`: refresh token→access token→YouTube resumable 청크 업로드(8MB), http만, 진행률 추적, 성공 시 watch URL 반환
 
-### 남은 것 (실제 빌드/검증만)
-- Android cmdline-tools 설치 + `flutter doctor --android-licenses` → APK 빌드
-- Windows 방화벽 4000 inbound 룰 (관리자): `netsh advfirewall firewall add rule name="y_tube" dir=in action=allow protocol=TCP localport=4000`
-- 실기기 end-to-end: 폰에서 mp4+JSON 첨부 → 서버 렌더 → 다운로드 → 유튜브 업로드
-- **모든 코드 작성 완료. analyze error 0.**
+### ⚠️ 방향 전환 (2026-05-16) — PC 전용 로컬 웹 UI
+**Flutter 모바일/APK 전면 중단** (사장님 결정). lib/ 코드는 참고용 보존, 미사용.
+모든 작업을 PC에서: 브라우저 로컬 웹 UI.
+
+- `server/public/index.html` — 드래그앤드롭(mp4+JSON) → 렌더 진행률 → 미리보기 → 메타 입력 → 유튜브 업로드
+- `server/youtube.mjs` — Node 유튜브 resumable 업로드 (refresh token, 8MB 청크)
+- `server/index.mjs` — express.static + POST /upload/:id
+- `server/secrets.mjs` — Node OAuth 자격증명 (.gitignore)
+
+### 사용법 (PC)
+```powershell
+cd D:\Claude_works\y_tube\server
+node index.mjs
+```
+→ 브라우저 `http://localhost:4000` → mp4+JSON 끌어다 놓기 → 렌더 → 유튜브 업로드
+
+### GitHub
+- **github.com/elsa9598/y_tube** (private). musics/·secrets·.env 제외하고 코드만.
+
+### 남은 것
+- 로컬 웹 UI 실제 전과정(렌더→유튜브 업로드) 사장님 브라우저 검증 (업로드는 실제 채널 반영이라 사장님 직접)
 
 ---
 
