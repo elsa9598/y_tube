@@ -1,0 +1,23 @@
+{
+  "name": "y-tube-remotion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "오둥이 하루 — 16:9 MP4 렌더링 (이미지 + MP3 + LRC) Remotion 컴포지션",
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion render",
+    "render": "remotion render Cartoon out/odung.mp4 --props=./sample-props.json"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

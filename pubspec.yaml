@@ -1,0 +1,29 @@
+name: y_tube
+description: "오둥이 하루 — Cartoon-Music. 이미지 + MP3 + LRC → MP4 + 유튜브 업로드"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.4.0
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  provider: ^6.1.2          # 프로젝트 상태 공유
+  file_picker: ^8.1.2       # 이미지/MP3/LRC 파일 선택
+  just_audio: ^0.9.40       # mp4 오디오 재생 + 위치 스트림 (미리보기)
+  path_provider: ^2.1.4     # 앱 저장 디렉터리
+  path: ^1.9.0
+  http: ^1.2.2              # 렌더 서버 통신 (multipart 업로드 / status / download)
+  # Phase 3 유튜브 업로드: googleapis / googleapis_auth 추가 예정
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  # 폰트는 시스템 기본 사용. 추가 폰트 필요 시 assets/fonts/에 두고 등록.

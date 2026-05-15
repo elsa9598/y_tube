@@ -1,0 +1,16 @@
+{
+  "name": "y-tube-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "오둥이 하루 — 렌더링 서버. mp4+JSON 받아 Remotion 렌더 후 MP4 반환",
+  "scripts": {
+    "dev": "node index.mjs",
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}

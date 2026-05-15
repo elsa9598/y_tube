@@ -1,0 +1,284 @@
+/**
+ * y_tube 렌더링 서버.
+ *
+ * 흐름:
+ *   1. POST /render (multipart mp4 + json)
+ *      → jobs/<id>/ 에 audio.mp4, meta.json 저장
+ *      → 시리얼 큐에 enqueue, jobId 반환
+ *   2. 워커가 순서대로:
+ *        gen-props.mjs --mp4 --json --out  (mp4 첫 프레임 추출 + lyrics 파싱)
+ *        npx remotion render Cartoon output.mp4 --props=...
+ *        stdout 파싱으로 진행률 갱신
+ *   3. GET /status/:id 폴링 → {state, progress, message}
+ *   4. GET /download/:id → MP4 스트림
+ *
+ * 동시성: 1 (PC 한 대 + Remotion 무거움). 사장님 폰 단독 사용이라 충분.
+ * 저장소: 메모리 Map. 서버 재시작 시 이력 사라짐 (개인용 도구라 OK).
+ */
+import express from "express";
+import multer from "multer";
+import cors from "cors";
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { uploadToYouTube } from "./youtube.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(__dirname, "..");
+const REMOTION_DIR = join(REPO_ROOT, "remotion");
+const REMOTION_CLI = join(
+  REMOTION_DIR,
+  "node_modules",
+  "@remotion",
+  "cli",
+  "remotion-cli.js"
+);
+const JOBS_DIR = join(__dirname, "jobs");
+mkdirSync(JOBS_DIR, { recursive: true });
+
+/* 서버가 절대 죽지 않도록 — 자식 프로세스/렌더 예외는 job 단위로만 실패 처리 */
+process.on("uncaughtException", (e) =>
+  console.error("[uncaughtException]", e)
+);
+process.on("unhandledRejection", (e) =>
+  console.error("[unhandledRejection]", e)
+);
+
+const PORT = Number(process.env.PORT ?? 4000);
+const MAX_UPLOAD_MB = 300; // mp4 한 곡 ~50MB. 안전 마진.
+
+/* ========== 작업 큐 ========== */
+const jobs = new Map(); // id → { state, progress, message, outputPath, error, createdAt }
+const queue = [];
+let processing = false;
+
+function enqueue(id) {
+  queue.push(id);
+  setImmediate(processNext);
+}
+
+async function processNext() {
+  if (processing || queue.length === 0) return;
+  processing = true;
+  const id = queue.shift();
+  const job = jobs.get(id);
+  if (!job) {
+    processing = false;
+    return processNext();
+  }
+  const dir = join(JOBS_DIR, id);
+  const mp4Path = join(dir, "audio.mp4");
+  const jsonPath = join(dir, "meta.json");
+  const propsPath = join(dir, "props.json");
+  const outPath = join(dir, "output.mp4");
+
+  try {
+    job.state = "preparing";
+    job.progress = 0;
+    job.message = "첫 프레임 추출 + 가사 파싱 중...";
+    await runCmd(
+      "node",
+      [
+        "scripts/gen-props.mjs",
+        "--mp4",
+        mp4Path,
+        "--json",
+        jsonPath,
+        "--out",
+        propsPath,
+      ],
+      REMOTION_DIR,
+      () => {}
+    );
+
+    job.state = "rendering";
+    job.message = "렌더링 시작...";
+    await runCmd(
+      process.execPath, // node — npx 우회 (Windows .cmd 불안정 회피)
+      [
+        REMOTION_CLI,
+        "render",
+        "Cartoon",
+        outPath,
+        `--props=${propsPath}`,
+        "--concurrency=4",
+      ],
+      REMOTION_DIR,
+      (line) => {
+        const m = line.match(/Rendered (\d+)\/(\d+)/);
+        if (m) {
+          const cur = +m[1], total = +m[2];
+          job.progress = Math.round((cur / total) * 80); // 0~80% = 프레임 렌더
+          job.message = `프레임 렌더 ${cur}/${total}`;
+          return;
+        }
+        const e = line.match(/Encoded (\d+)\/(\d+)/);
+        if (e) {
+          const cur = +e[1], total = +e[2];
+          job.progress = 80 + Math.round((cur / total) * 20); // 80~100% = 인코딩
+          job.message = `인코딩 ${cur}/${total}`;
+        }
+      }
+    );
+
+    if (!existsSync(outPath)) {
+      throw new Error("렌더는 끝났지만 출력 파일이 없습니다");
+    }
+    job.state = "done";
+    job.progress = 100;
+    job.message = "완료";
+    job.outputPath = outPath;
+    job.outputSize = statSync(outPath).size;
+    console.log(`[job ${id}] ✅ done — ${(job.outputSize / 1024 / 1024).toFixed(1)} MB`);
+  } catch (err) {
+    job.state = "error";
+    job.error = String(err.message ?? err);
+    job.message = `실패: ${job.error}`;
+    console.error(`[job ${id}] ❌`, err);
+  } finally {
+    processing = false;
+    setImmediate(processNext);
+  }
+}
+
+/** spawn child + stdout 라인 단위 콜백 + UTF-8 인코딩 */
+function runCmd(cmd, args, cwd, onStdoutLine) {
+  return new Promise((resolveFn, rejectFn) => {
+    const isWin = process.platform === "win32";
+    /* npx 같은 .cmd 호출은 Node 24 보안 변경으로 shell:true 필요 */
+    const useShell = isWin && (cmd === "npx" || cmd.endsWith(".cmd"));
+    const ch = spawn(cmd, args, { cwd, shell: useShell });
+    ch.stdout.setEncoding("utf8");
+    ch.stderr.setEncoding("utf8");
+    let buf = "";
+    ch.stdout.on("data", (d) => {
+      buf += d;
+      let idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (line) onStdoutLine(line);
+      }
+    });
+    ch.stderr.on("data", (d) => {
+      /* Remotion이 progress를 stderr로 보내는 경우도 있어 같은 콜백에 흘림 */
+      const lines = d.split(/\r?\n/);
+      for (const ln of lines) {
+        const t = ln.trim();
+        if (t) onStdoutLine(t);
+      }
+    });
+    ch.on("close", (code) => {
+      if (code === 0) resolveFn();
+      else rejectFn(new Error(`${cmd} exit ${code}`));
+    });
+    ch.on("error", rejectFn);
+  });
+}
+
+/* ========== Express ========== */
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: "1mb" }));
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
+});
+
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    jobsTotal: jobs.size,
+    queueLen: queue.length,
+    processing,
+    uptimeSec: Math.round(process.uptime()),
+  });
+});
+
+/**
+ * POST /render
+ *   multipart fields:
+ *     - mp4  (file, required)
+ *     - json (file OR plain text; 둘 다 허용)
+ *   응답: { jobId, state }
+ */
+app.post(
+  "/render",
+  upload.fields([
+    { name: "mp4", maxCount: 1 },
+    { name: "json", maxCount: 1 },
+  ]),
+  (req, res) => {
+    const mp4File = req.files?.mp4?.[0];
+    const jsonFile = req.files?.json?.[0];
+    if (!mp4File) return res.status(400).json({ error: "mp4 파일 누락" });
+    if (!jsonFile && !req.body?.json) {
+      return res.status(400).json({ error: "json 누락 (파일 또는 body.json 텍스트)" });
+    }
+
+    const id = randomUUID();
+    const dir = join(JOBS_DIR, id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "audio.mp4"), mp4File.buffer);
+    if (jsonFile) {
+      writeFileSync(join(dir, "meta.json"), jsonFile.buffer);
+    } else {
+      writeFileSync(join(dir, "meta.json"), String(req.body.json), "utf8");
+    }
+
+    jobs.set(id, {
+      state: "queued",
+      progress: 0,
+      message: "대기 중",
+      createdAt: new Date().toISOString(),
+    });
+    enqueue(id);
+
+    console.log(
+      `[job ${id}] queued — mp4 ${(mp4File.size / 1024 / 1024).toFixed(1)} MB`
+    );
+    res.json({ jobId: id, state: "queued" });
+  }
+);
+
+app.get("/status/:id", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "job 없음" });
+  const { outputPath, ...safe } = job;
+  res.json({ ...safe, hasOutput: !!outputPath });
+});
+
+app.get("/download/:id", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job || !job.outputPath || !existsSync(job.outputPath)) {
+    return res.status(404).json({ error: "결과 없음" });
+  }
+  const stat = statSync(job.outputPath);
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Content-Length", stat.size);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${req.params.id}.mp4"`
+  );
+  createReadStream(job.outputPath).pipe(res);
+});
+
+/* 로컬/네트워크 양쪽에서 접근 가능하게 0.0.0.0 바인드 */
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🎬 y_tube render server  http://0.0.0.0:${PORT}`);
+  console.log(`   POST /render          multipart mp4 + json`);
+  console.log(`   GET  /status/:id      진행률 폴링`);
+  console.log(`   GET  /download/:id    결과 MP4`);
+  console.log(`   GET  /health          상태`);
+  console.log(`   jobs dir              ${JOBS_DIR}`);
+  console.log(`   remotion dir          ${REMOTION_DIR}`);
+});

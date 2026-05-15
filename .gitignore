@@ -1,0 +1,73 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+# Android
+android/.gradle/
+android/captures/
+android/gradlew
+android/gradlew.bat
+android/local.properties
+**/android/**/gradle-wrapper.jar
+**/android/.gradle
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/android/key.properties
+*.jks
+
+# iOS
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Pods/
+**/ios/Runner.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Web
+**/web/main.dart.js
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.log
+
+# 🔐 시크릿 — 절대 커밋 X
+lib/secrets.dart
+.env
+client.json
+*.keystore
+*.jks
+google-services.json
+service-account.json
+firebase.json
+
+# Remotion (서버 렌더 서브프로젝트)
+remotion/node_modules/
+remotion/out/
+remotion/.cache/
+remotion/dist/
+
+# Server (렌더 API)
+server/node_modules/
+server/uploads/
+server/jobs/
+server/secrets.mjs
+
+# 사장님 곡 원본 — 1.2GB, 저작 콘텐츠. 로컬에만 유지 (GitHub 제외)
+musics/
+
+# Remotion 런타임 산출물 / 임시 자산
+remotion/public/current/
+remotion/sample-props.json
+remotion/sample-meta.json
+
+# OS
+.DS_Store
+Thumbs.db
