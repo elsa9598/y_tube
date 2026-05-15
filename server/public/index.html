@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>오둥이 하루 — 렌더 & 업로드</title>
+<style>
+  :root{
+    --bg:#0A0B0E; --surface:#14161B; --surfaceAlt:#1B1E25; --stroke:#252932;
+    --accent:#FB6357; --accentSoft:#FFB4AC; --blue:#3B82F6;
+    --txt:#F2F4F7; --dim:#8A95A3; --faint:#5C6473;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:32px 16px;min-height:100vh}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:26px;font-weight:800;letter-spacing:-.5px;margin-bottom:4px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:28px}
+  .card{background:var(--surface);border:1px solid var(--stroke);border-radius:16px;
+    padding:22px;margin-bottom:18px}
+  .drop{border:2px dashed var(--stroke);border-radius:14px;padding:34px 20px;text-align:center;
+    cursor:pointer;transition:.15s;color:var(--dim)}
+  .drop.hot{border-color:var(--accentSoft);background:var(--surfaceAlt);color:var(--txt)}
+  .drop b{color:var(--txt)}
+  .files{display:flex;gap:12px;margin-top:14px}
+  .pill{flex:1;background:var(--surfaceAlt);border:1px solid var(--stroke);border-radius:10px;
+    padding:12px 14px;font-size:13px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pill.ok{border-color:rgba(255,180,172,.4);color:var(--txt)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:12px;padding:15px 22px;
+    font-size:15px;font-weight:700;cursor:pointer;width:100%;transition:.15s}
+  button:disabled{background:var(--surfaceAlt);color:var(--faint);cursor:not-allowed}
+  button.alt{background:var(--blue)}
+  .bar{height:8px;background:var(--surfaceAlt);border-radius:6px;overflow:hidden;margin:12px 0 8px}
+  .bar>i{display:block;height:100%;background:var(--blue);width:0;transition:width .3s}
+  .bar.up>i{background:var(--accent)}
+  .msg{font-size:12.5px;color:var(--dim)}
+  .pct{float:right;font-weight:800;color:var(--accentSoft)}
+  label{display:block;font-size:13px;font-weight:600;margin:16px 0 7px}
+  input[type=text],textarea,select{width:100%;background:var(--surface);color:var(--txt);
+    border:1px solid var(--stroke);border-radius:10px;padding:12px 14px;font-size:14px;font-family:inherit}
+  textarea{resize:vertical;min-height:84px}
+  video{width:100%;border-radius:12px;margin-bottom:6px;background:#000}
+  a.yt{display:inline-block;margin-top:12px;color:var(--accentSoft);font-weight:700;font-size:15px}
+  .hide{display:none}
+  .step{font-size:11px;letter-spacing:1.5px;color:var(--faint);font-weight:600;margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>오둥이 하루</h1>
+  <div class="sub">mp4 + JSON 첨부 → 16:9 렌더링 → 유튜브 업로드</div>
+
+  <!-- STEP 1: 자산 -->
+  <div class="card" id="cardPick">
+    <div class="step">STEP 01 · 에셋</div>
+    <div class="drop" id="drop">
+      <b>여기에 mp4 + JSON 파일을 끌어다 놓거나</b><br/>클릭해서 선택
+      <input id="file" type="file" accept=".mp4,.json" multiple class="hide" />
+    </div>
+    <div class="files">
+      <div class="pill" id="pMp4">mp4 — 미선택</div>
+      <div class="pill" id="pJson">JSON — 미선택</div>
+    </div>
+    <div style="margin-top:16px">
+      <button id="btnRender" disabled>렌더링 시작</button>
+    </div>
+  </div>
+
+  <!-- STEP 2: 렌더 진행 -->
+  <div class="card hide" id="cardRender">
+    <div class="step">STEP 02 · 리모션 렌더링</div>
+    <div><span class="pct" id="rPct">0%</span><span id="rState">대기</span></div>
+    <div class="bar"><i id="rBar"></i></div>
+    <div class="msg" id="rMsg">—</div>
+  </div>
+
+  <!-- STEP 3: 업로드 -->
+  <div class="card hide" id="cardUp">
+    <div class="step">STEP 03 · 유튜브 업로드</div>
+    <video id="preview" controls class="hide"></video>
+    <label>동영상 제목 (필수)</label>
+    <input type="text" id="title" maxlength="100" placeholder="제목" />
+    <label>설명</label>
+    <textarea id="desc" maxlength="5000" placeholder="설명"></textarea>
+    <label>태그 (쉼표로 구분)</label>
+    <input type="text" id="tags" placeholder="오둥이, cartoon music, lofi" />
+    <label>공개 상태</label>
+    <select id="privacy">
+      <option value="public">공개</option>
+      <option value="unlisted">일부 공개</option>
+      <option value="private" selected>비공개</option>
+    </select>
+    <div style="margin-top:18px">
+      <button class="alt" id="btnUpload">유튜브에 업로드</button>
+    </div>
+    <div class="bar up hide" id="uWrap"><i id="uBar"></i></div>
+    <div class="msg" id="uMsg"></div>
+    <a class="yt hide" id="ytLink" target="_blank" rel="noopener"></a>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let mp4File = null, jsonFile = null, jobId = null;
+
+/* ---- 파일 선택 ---- */
+const drop = $("drop"), fileInput = $("file");
+drop.onclick = () => fileInput.click();
+["dragover","dragenter"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add("hot")}));
+["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("hot")}));
+drop.addEventListener("drop", ev => handleFiles(ev.dataTransfer.files));
+fileInput.addEventListener("change", () => handleFiles(fileInput.files));
+
+function handleFiles(list){
+  for(const f of list){
+    if(f.name.toLowerCase().endsWith(".mp4")) mp4File = f;
+    else if(f.name.toLowerCase().endsWith(".json")) jsonFile = f;
+  }
+  $("pMp4").textContent = mp4File ? "mp4 · " + mp4File.name : "mp4 — 미선택";
+  $("pMp4").classList.toggle("ok", !!mp4File);
+  $("pJson").textContent = jsonFile ? "JSON · " + jsonFile.name : "JSON — 미선택";
+  $("pJson").classList.toggle("ok", !!jsonFile);
+  $("btnRender").disabled = !(mp4File && jsonFile);
+  /* JSON에서 제목 미리 추출 */
+  if(jsonFile){
+    const r = new FileReader();
+    r.onload = () => { try{ const o=JSON.parse(r.result); if(o.title) $("title").value=o.title; }catch(e){} };
+    r.readAsText(jsonFile);
+  }
+}
+
+/* ---- 렌더 ---- */
+$("btnRender").onclick = async () => {
+  $("btnRender").disabled = true;
+  $("cardRender").classList.remove("hide");
+  const fd = new FormData();
+  fd.append("mp4", mp4File);
+  fd.append("json", jsonFile);
+  const r = await fetch("/render", { method:"POST", body:fd });
+  const j = await r.json();
+  if(!j.jobId){ $("rMsg").textContent = "오류: "+JSON.stringify(j); return; }
+  jobId = j.jobId;
+  pollRender();
+};
+
+async function pollRender(){
+  try{
+    const s = await (await fetch("/status/"+jobId)).json();
+    const p = Math.round(s.progress||0);
+    $("rPct").textContent = p+"%";
+    $("rBar").style.width = p+"%";
+    $("rState").textContent = s.state||"";
+    $("rMsg").textContent = s.message||"";
+    if(s.state === "done"){
+      $("preview").src = "/download/"+jobId;
+      $("preview").classList.remove("hide");
+      $("cardUp").classList.remove("hide");
+      $("cardUp").scrollIntoView({behavior:"smooth"});
+      return;
+    }
+    if(s.state === "error"){ $("rMsg").textContent = "❌ "+(s.message||"렌더 실패"); return; }
+  }catch(e){ /* 일시 오류 무시 */ }
+  setTimeout(pollRender, 2000);
+}
+
+/* ---- 업로드 ---- */
+$("btnUpload").onclick = async () => {
+  const title = $("title").value.trim();
+  if(!title){ alert("제목을 입력하세요"); return; }
+  $("btnUpload").disabled = true;
+  $("uWrap").classList.remove("hide");
+  const body = {
+    title,
+    description: $("desc").value,
+    tags: $("tags").value.split(",").map(s=>s.trim()).filter(Boolean),
+    privacyStatus: $("privacy").value,
+  };
+  const r = await fetch("/upload/"+jobId, {
+    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)
+  });
+  const j = await r.json();
+  if(!j.started){ $("uMsg").textContent = "오류: "+JSON.stringify(j); $("btnUpload").disabled=false; return; }
+  pollUpload();
+};
+
+async function pollUpload(){
+  try{
+    const s = await (await fetch("/status/"+jobId)).json();
+    const u = s.upload;
+    if(u){
+      const p = Math.round(u.progress||0);
+      $("uBar").style.width = p+"%";
+      $("uMsg").textContent = p+"% · "+(u.message||"");
+      if(u.state === "done"){
+        $("uMsg").textContent = "✅ 업로드 완료";
+        const a = $("ytLink");
+        a.href = u.url; a.textContent = "▶ "+u.url;
+        a.classList.remove("hide");
+        return;
+      }
+      if(u.state === "error"){ $("uMsg").textContent = "❌ "+(u.message||"업로드 실패"); $("btnUpload").disabled=false; return; }
+    }
+  }catch(e){}
+  setTimeout(pollUpload, 2000);
+}
+</script>
+</body>
+</html>

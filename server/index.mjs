@@ -188,6 +188,8 @@ function runCmd(cmd, args, cwd, onStdoutLine) {
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+/* 로컬 웹 UI (server/public/index.html) */
+app.use(express.static(join(__dirname, "public")));
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -257,6 +259,52 @@ app.get("/status/:id", (req, res) => {
   res.json({ ...safe, hasOutput: !!outputPath });
 });
 
+/**
+ * POST /upload/:id
+ *   body: { title, description, tags[], privacyStatus }
+ *   렌더 완료된 job의 output.mp4를 유튜브에 업로드. 비동기 시작 → /status로 추적.
+ */
+app.post("/upload/:id", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job || !job.outputPath || !existsSync(job.outputPath)) {
+    return res.status(404).json({ error: "렌더 결과 없음" });
+  }
+  if (job.upload && job.upload.state === "uploading") {
+    return res.status(409).json({ error: "이미 업로드 중" });
+  }
+  const meta = {
+    title: String(req.body?.title ?? "").trim(),
+    description: String(req.body?.description ?? ""),
+    tags: Array.isArray(req.body?.tags) ? req.body.tags : [],
+    privacyStatus: ["public", "unlisted", "private"].includes(
+      req.body?.privacyStatus
+    )
+      ? req.body.privacyStatus
+      : "private",
+  };
+  if (!meta.title) return res.status(400).json({ error: "제목 필수" });
+
+  job.upload = { state: "uploading", progress: 0, message: "준비 중", url: null };
+  uploadToYouTube(job.outputPath, meta, (p, m) => {
+    job.upload.progress = Math.round(p);
+    job.upload.message = m;
+  })
+    .then((url) => {
+      job.upload.state = "done";
+      job.upload.progress = 100;
+      job.upload.message = "업로드 완료";
+      job.upload.url = url;
+      console.log(`[job ${req.params.id}] ▶ youtube: ${url}`);
+    })
+    .catch((err) => {
+      job.upload.state = "error";
+      job.upload.message = String(err.message ?? err);
+      console.error(`[job ${req.params.id}] youtube ❌`, err);
+    });
+
+  res.json({ started: true });
+});
+
 app.get("/download/:id", (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job || !job.outputPath || !existsSync(job.outputPath)) {
@@ -278,6 +326,8 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`   POST /render          multipart mp4 + json`);
   console.log(`   GET  /status/:id      진행률 폴링`);
   console.log(`   GET  /download/:id    결과 MP4`);
+  console.log(`   POST /upload/:id      유튜브 업로드`);
+  console.log(`   웹 UI →  http://localhost:${PORT}`);
   console.log(`   GET  /health          상태`);
   console.log(`   jobs dir              ${JOBS_DIR}`);
   console.log(`   remotion dir          ${REMOTION_DIR}`);
