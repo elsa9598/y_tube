@@ -74,3 +74,6 @@ remotion/sample-meta.json
 # OS
 .DS_Store
 Thumbs.db
+
+# OAuth 데스크톱 클라이언트 (client_secret 포함) — 절대 커밋 X
+oauth.json
