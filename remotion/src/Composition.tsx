@@ -70,12 +70,12 @@ export const CartoonComposition: React.FC<CartoonProps> = ({
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            filter: "blur(60px) brightness(0.62) saturate(1.15)",
+            filter: "blur(60px) brightness(0.75) saturate(1.18)",
             transform: "scale(1.15)",
           }}
         />
-        {/* 살짝만 가라앉히는 오버레이 (배경 이미지가 은은히 비치도록) */}
-        <AbsoluteFill style={{ backgroundColor: "rgba(10,11,14,0.28)" }} />
+        {/* 아주 옅은 오버레이만 (답답함 피드백 — 거의 안 가림) */}
+        <AbsoluteFill style={{ backgroundColor: "rgba(10,11,14,0.15)" }} />
       </AbsoluteFill>
 
       {/* 좌측 1:1 이미지 + 우측 가사 */}
@@ -116,12 +116,10 @@ export const CartoonComposition: React.FC<CartoonProps> = ({
         </div>
       </AbsoluteFill>
 
-      {/* 하단 그라디언트 + 타이틀 */}
+      {/* 하단 타이틀 (그라디언트 제거 — 답답함 피드백. 가독성은 텍스트 그림자로) */}
       <AbsoluteFill
         style={{
           justifyContent: "flex-end",
-          background:
-            "linear-gradient(to top, rgba(10,11,14,0.95) 0%, rgba(10,11,14,0.7) 35%, rgba(10,11,14,0) 70%)",
           pointerEvents: "none",
         }}
       >
@@ -133,7 +131,8 @@ export const CartoonComposition: React.FC<CartoonProps> = ({
             fontSize: 44,
             fontWeight: 800,
             letterSpacing: -0.5,
-            textShadow: "0 4px 24px rgba(0,0,0,0.8)",
+            textShadow:
+              "0 2px 10px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.85)",
           }}
         >
           {title}
