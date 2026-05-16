@@ -70,12 +70,12 @@ export const CartoonComposition: React.FC<CartoonProps> = ({
             width: "100%",
             height: "100%",
             objectFit: "cover",
-            filter: "blur(60px) brightness(0.4) saturate(1.1)",
+            filter: "blur(60px) brightness(0.62) saturate(1.15)",
             transform: "scale(1.15)",
           }}
         />
-        {/* 어둡게 가라앉히는 오버레이 */}
-        <AbsoluteFill style={{ backgroundColor: "rgba(10,11,14,0.45)" }} />
+        {/* 살짝만 가라앉히는 오버레이 (배경 이미지가 은은히 비치도록) */}
+        <AbsoluteFill style={{ backgroundColor: "rgba(10,11,14,0.28)" }} />
       </AbsoluteFill>
 
       {/* 좌측 1:1 이미지 + 우측 가사 */}
