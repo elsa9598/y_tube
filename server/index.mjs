@@ -44,8 +44,8 @@ const REMOTION_CLI = join(
 );
 const JOBS_DIR = join(__dirname, "jobs");
 mkdirSync(JOBS_DIR, { recursive: true });
-/* 완성 mp4 자동 저장 위치: D:\Claude_works\y_tube\out\<곡제목>.mp4 */
-const OUT_DIR = join(REPO_ROOT, "out");
+/* 완성 mp4 자동 저장 위치: D:\Claude_works\y_tube\remotion\out\<곡제목>.mp4 */
+const OUT_DIR = join(REMOTION_DIR, "out");
 mkdirSync(OUT_DIR, { recursive: true });
 const safeName = (s) =>
   String(s || "untitled").replace(/[\\/:*?"<>|]/g, "_").trim().slice(0, 120);
