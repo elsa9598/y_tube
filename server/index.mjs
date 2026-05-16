@@ -25,6 +25,7 @@ import {
   createReadStream,
   existsSync,
   mkdirSync,
+  readFileSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -203,6 +204,38 @@ function runCmd(cmd, args, cwd, onStdoutLine) {
 /* ========== Express ========== */
 const app = express();
 app.use(cors());
+
+/* 🔒 외부(ngrok) 노출 보호 — ID/PW Basic 인증.
+   .env(D:\.env) 의 WEB_USER / WEB_PASS 사용. 둘 다 없으면 잠금 해제(로컬 전용 모드). */
+let WEB_USER = "",
+  WEB_PASS = "";
+try {
+  const env = readFileSync("D:/.env", "utf8");
+  const ge = (k) => {
+    const m = env.match(new RegExp("^" + k + '=\\"?([^\\"\\r\\n]+)', "m"));
+    return m ? m[1].trim() : "";
+  };
+  WEB_USER = ge("WEB_USER");
+  WEB_PASS = ge("WEB_PASS");
+} catch {}
+if (WEB_USER && WEB_PASS) {
+  app.use((req, res, next) => {
+    const h = req.headers.authorization || "";
+    const dec = Buffer.from(h.split(" ")[1] || "", "base64").toString();
+    const i = dec.indexOf(":");
+    if (dec.slice(0, i) === WEB_USER && dec.slice(i + 1) === WEB_PASS) {
+      return next();
+    }
+    res
+      .set("WWW-Authenticate", 'Basic realm="y_tube"')
+      .status(401)
+      .end("인증이 필요합니다");
+  });
+  console.log("🔒 Basic 인증 활성 (WEB_USER/WEB_PASS)");
+} else {
+  console.log("⚠️  WEB_USER/WEB_PASS 없음 — 인증 없이 전체 공개 (로컬 전용으로만 쓰세요)");
+}
+
 app.use(express.json({ limit: "1mb" }));
 /* 로컬 웹 UI (server/public/index.html) */
 app.use(express.static(join(__dirname, "public")));
