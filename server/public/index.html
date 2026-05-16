@@ -142,6 +142,7 @@ $("btnRender").onclick = async () => {
   const fd = new FormData();
   fd.append("mp4", mp4File);
   fd.append("lrc", lrcFile);
+  fd.append("title", $("title").value.trim());
   const r = await fetch("/render", { method:"POST", body:fd });
   const j = await r.json();
   if(!j.jobId){ $("rMsg").textContent = "오류: "+JSON.stringify(j); return; }

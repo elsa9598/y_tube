@@ -63,6 +63,9 @@ server/secrets.mjs
 # 사장님 곡 원본 — 1.2GB, 저작 콘텐츠. 로컬에만 유지 (GitHub 제외)
 musics/
 
+# 완성 mp4 자동저장 폴더 (곡제목.mp4) — 대용량, 로컬만
+out/
+
 # Remotion 런타임 산출물 / 임시 자산
 remotion/public/current/
 remotion/sample-props.json

@@ -116,6 +116,7 @@ function parseArgs(argv) {
     if (k === "--folder") a.folder = argv[++i];
     else if (k === "--mp4") a.mp4 = argv[++i];
     else if (k === "--lrc") a.lrc = argv[++i];
+    else if (k === "--title") a.title = argv[++i];
     else if (k === "--json") a.json = argv[++i];
     else if (k === "--out") a.out = argv[++i];
     else if (!k.startsWith("--") && !a.folder && !a.mp4) a.folder = k; // 하위호환: 첫 위치인자=폴더
@@ -179,6 +180,11 @@ if (args.mp4 && args.lrc) {
       '  node scripts/gen-props.mjs --mp4 "<...mp4>" --json "<metadata.js|.json>" [--out props.json]'
   );
   process.exit(1);
+}
+
+/* --title 이 명시되면 모든 모드보다 최우선 (서버가 원본 곡 제목 주입) */
+if (args.title && args.title.trim()) {
+  title = args.title.trim();
 }
 
 if (!existsSync(mp4SrcPath)) {

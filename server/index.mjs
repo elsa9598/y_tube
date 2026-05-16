@@ -21,6 +21,7 @@ import cors from "cors";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
+  copyFileSync,
   createReadStream,
   existsSync,
   mkdirSync,
@@ -43,6 +44,11 @@ const REMOTION_CLI = join(
 );
 const JOBS_DIR = join(__dirname, "jobs");
 mkdirSync(JOBS_DIR, { recursive: true });
+/* 완성 mp4 자동 저장 위치: D:\Claude_works\y_tube\out\<곡제목>.mp4 */
+const OUT_DIR = join(REPO_ROOT, "out");
+mkdirSync(OUT_DIR, { recursive: true });
+const safeName = (s) =>
+  String(s || "untitled").replace(/[\\/:*?"<>|]/g, "_").trim().slice(0, 120);
 
 /* 서버가 절대 죽지 않도록 — 자식 프로세스/렌더 예외는 job 단위로만 실패 처리 */
 process.on("uncaughtException", (e) =>
@@ -92,6 +98,7 @@ async function processNext() {
         mp4Path,
         "--lrc",
         lrcPath,
+        ...(job.title ? ["--title", job.title] : []),
         "--out",
         propsPath,
       ],
@@ -137,6 +144,15 @@ async function processNext() {
     job.message = "완료";
     job.outputPath = outPath;
     job.outputSize = statSync(outPath).size;
+    /* 곡 제목으로 D:\Claude_works\y_tube\out\ 에 자동 저장 */
+    try {
+      const finalPath = join(OUT_DIR, safeName(job.title || id) + ".mp4");
+      copyFileSync(outPath, finalPath);
+      job.savedPath = finalPath;
+      console.log(`[job ${id}] 📁 저장: ${finalPath}`);
+    } catch (e) {
+      console.error(`[job ${id}] out 복사 실패:`, e.message);
+    }
     console.log(`[job ${id}] ✅ done — ${(job.outputSize / 1024 / 1024).toFixed(1)} MB`);
   } catch (err) {
     job.state = "error";
@@ -231,10 +247,14 @@ app.post(
     writeFileSync(join(dir, "audio.mp4"), mp4File.buffer);
     writeFileSync(join(dir, "lyrics.lrc"), lrcFile.buffer);
 
+    /* UI가 보낸 곡 제목 (하단 타이틀 + out 파일명). 없으면 gen-props가 LRC[ti:]/파일명 */
+    const title = String(req.body?.title ?? "").trim();
+
     jobs.set(id, {
       state: "queued",
       progress: 0,
       message: "대기 중",
+      title,
       createdAt: new Date().toISOString(),
     });
     enqueue(id);
