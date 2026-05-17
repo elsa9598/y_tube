@@ -187,6 +187,18 @@ export function suggestShortsStarts({
       return n ? sum / n : -70;
     };
 
+    /* 윈도우 [st, st+len) 안의 가사 라인 수 (밀집도). 마커( (...)만 )는 제외 */
+    const lyricTimes = lrcLines
+      .filter((l) => !/^\(.*\)$/.test(l.text.trim()))
+      .map((l) => l.t);
+    const densityAt = (st) =>
+      lyricTimes.reduce((n, t) => n + (t >= st && t < st + lenSec ? 1 : 0), 0);
+    let maxDensity = 1;
+    for (let st = 0; st <= maxStart; st++) {
+      const d = densityAt(st);
+      if (d > maxDensity) maxDensity = d;
+    }
+
     /* 후보 수집 */
     const cands = [];
 
@@ -194,6 +206,23 @@ export function suggestShortsStarts({
     if (chorusStart != null) {
       const st = Math.min(maxStart, snapToLine(chorusStart, lrcLines));
       cands.push({ start: st, base: windowScore(st), bonus: 6, why: "후렴" });
+    }
+
+    /* 1b) 가사 가장 많은 30초 윈도우 — 멈춘 듯 보이는 듬성 구간 회피 */
+    {
+      let dSt = 0;
+      let dBest = -1;
+      for (let st = 0; st <= maxStart; st++) {
+        const d = densityAt(st);
+        if (d > dBest) {
+          dBest = d;
+          dSt = st;
+        }
+      }
+      if (dBest >= 2) {
+        const sn = Math.min(maxStart, snapToLine(dSt, lrcLines) || dSt);
+        cands.push({ start: sn, base: windowScore(sn), bonus: 3, why: "가사" });
+      }
     }
 
     /* 2) 음원 에너지 최고 30초 윈도우 (1초 스텝) */
@@ -229,8 +258,14 @@ export function suggestShortsStarts({
 
     if (!cands.length) return fallback;
 
-    /* 점수 정규화(라우드니스 -70~0 → 0~1) + 보너스 → 정렬 */
-    for (const c of cands) c.score = (c.base + 70) / 70 + c.bonus;
+    /* 점수 = 라우드니스(0~1) + 보너스 + 가사밀집도(0~1, 가중 4).
+       가사 듬성 윈도우는 밀집도 항이 작아 자동으로 밀려남.
+       라인 ≤1 인 거의 빈 윈도우는 큰 감점 (멈춘 듯 보이는 구간 배제). */
+    for (const c of cands) {
+      const d = densityAt(c.start);
+      const normD = d / Math.max(1, maxDensity);
+      c.score = (c.base + 70) / 70 + c.bonus + 4 * normD - (d <= 1 ? 5 : 0);
+    }
     cands.sort((a, b) => b.score - a.score);
 
     /* 서로 ≥10초 떨어진 것만 상위 N */
@@ -244,8 +279,13 @@ export function suggestShortsStarts({
     const suggestions = picked.map((c, i) => ({
       start: c.start,
       label:
-        (c.why === "후렴" ? "후렴 " : i === 0 ? "추천 " : "강한 구간 ") +
-        fmtMMSS(c.start),
+        (c.why === "후렴"
+          ? "후렴 "
+          : c.why === "가사"
+          ? "가사 많음 "
+          : i === 0
+          ? "추천 "
+          : "강한 구간 ") + fmtMMSS(c.start),
     }));
     return { suggestions: suggestions.length ? suggestions : fallback.suggestions };
   } catch {
