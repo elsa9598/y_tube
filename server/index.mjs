@@ -53,6 +53,30 @@ mkdirSync(OUT_DIR, { recursive: true });
 const safeName = (s) =>
   String(s || "untitled").replace(/[\\/:*?"<>|]/g, "_").trim().slice(0, 120);
 
+/* 순수 JSON / export default {...} / module.exports={...} / 주석 섞인 metadata.js
+   모두 객체로 관용 파싱 (실패 시 {} 반환 — 호출부에서 fallback) */
+function looseParseMeta(text) {
+  let t = String(text ?? "").replace(/^﻿/, "");
+  try {
+    return JSON.parse(t);
+  } catch {}
+  t = t
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/^\s*export\s+default\s*/m, "")
+    .replace(/^\s*module\.exports\s*=\s*/m, "")
+    .trim()
+    .replace(/;\s*$/, "");
+  try {
+    return JSON.parse(t);
+  } catch {}
+  try {
+    return Function('"use strict";return (' + t + ");")();
+  } catch {
+    return {};
+  }
+}
+
 /* 서버가 절대 죽지 않도록 — 자식 프로세스/렌더 예외는 job 단위로만 실패 처리 */
 process.on("uncaughtException", (e) =>
   console.error("[uncaughtException]", e)
@@ -85,7 +109,7 @@ async function processNext() {
   }
   const dir = join(JOBS_DIR, id);
   const imagePath = join(dir, job.imageName || "image.jpg");
-  const mp3Path = join(dir, "audio.mp3");
+  const audioPath = join(dir, job.audioName || "audio.mp3");
   const jsonPath = join(dir, "meta.json");
   const propsPath = join(dir, "props.json");
   const outPath = join(dir, "output.mp4");
@@ -100,8 +124,8 @@ async function processNext() {
         "scripts/gen-props.mjs",
         "--image",
         imagePath,
-        "--mp3",
-        mp3Path,
+        "--audio",
+        audioPath,
         "--json",
         jsonPath,
         ...(job.title ? ["--title", job.title] : []),
@@ -270,24 +294,25 @@ app.get("/health", (_req, res) => {
 /**
  * POST /render
  *   multipart fields:
- *     - image (file, required) — 사장님이 만든 1:1 이미지 (png/jpg)
- *     - mp3   (file, required) — 음원
- *     - json  (file, required) — { title, lyrics(LRC 큰 문자열) }
+ *     - image       (file, required) — 사장님이 만든 1:1 이미지 (png/jpg)
+ *     - audio|mp3   (file, required) — 음원 (mp3 또는 mp4. mp4면 오디오 트랙 사용)
+ *     - json        (file, required) — { title, lyrics(LRC 큰 문자열) }
  *   응답: { jobId, state }
  */
 app.post(
   "/render",
   upload.fields([
     { name: "image", maxCount: 1 },
-    { name: "mp3", maxCount: 1 },
+    { name: "audio", maxCount: 1 },
+    { name: "mp3", maxCount: 1 }, // 하위호환
     { name: "json", maxCount: 1 },
   ]),
   (req, res) => {
     const imageFile = req.files?.image?.[0];
-    const mp3File = req.files?.mp3?.[0];
+    const audioFile = req.files?.audio?.[0] || req.files?.mp3?.[0];
     const jsonFile = req.files?.json?.[0];
     if (!imageFile) return res.status(400).json({ error: "이미지 파일 누락" });
-    if (!mp3File) return res.status(400).json({ error: "mp3 파일 누락" });
+    if (!audioFile) return res.status(400).json({ error: "음원 파일 누락 (mp3/mp4)" });
     if (!jsonFile) return res.status(400).json({ error: "json 파일 누락" });
 
     const id = randomUUID();
@@ -298,8 +323,11 @@ app.post(
     const extRaw = extname(imageFile.originalname || "").toLowerCase();
     const imageName =
       "image" + (/^\.(png|jpe?g|webp|gif)$/.test(extRaw) ? extRaw : ".jpg");
+    /* 음원: mp4면 audio.mp4 (오디오 트랙), 그 외 audio.mp3 */
+    const aExt = extname(audioFile.originalname || "").toLowerCase();
+    const audioName = aExt === ".mp4" ? "audio.mp4" : "audio.mp3";
     writeFileSync(join(dir, imageName), imageFile.buffer);
-    writeFileSync(join(dir, "audio.mp3"), mp3File.buffer);
+    writeFileSync(join(dir, audioName), audioFile.buffer);
     writeFileSync(join(dir, "meta.json"), jsonFile.buffer);
 
     /* 제목: UI가 JSON.title 을 읽어 보냄. 없으면 gen-props가 JSON.title 사용 */
@@ -314,6 +342,7 @@ app.post(
       message: "대기 중",
       title,
       imageName,
+      audioName,
       mode,
       shortsStart,
       createdAt: new Date().toISOString(),
@@ -323,8 +352,8 @@ app.post(
     console.log(
       `[job ${id}] queued — ${mode}${
         mode === "shorts" ? `@${shortsStart}s` : ""
-      } · image ${(imageFile.size / 1024 / 1024).toFixed(1)}MB · mp3 ${(
-        mp3File.size /
+      } · image ${(imageFile.size / 1024 / 1024).toFixed(1)}MB · ${audioName} ${(
+        audioFile.size /
         1024 /
         1024
       ).toFixed(1)}MB`
@@ -335,31 +364,31 @@ app.post(
 
 /**
  * POST /suggest-shorts  (렌더 안 함 — 분석만)
- *   multipart: mp3 (required), json (optional, lyrics 추출용)
+ *   multipart: audio|mp3 (required, mp3/mp4), json (optional, lyrics 추출용)
  *   응답: { suggestions: [{ start, label }] }  100% 로컬 분석
  */
 app.post(
   "/suggest-shorts",
   upload.fields([
-    { name: "mp3", maxCount: 1 },
+    { name: "audio", maxCount: 1 },
+    { name: "mp3", maxCount: 1 }, // 하위호환
     { name: "json", maxCount: 1 },
   ]),
   (req, res) => {
-    const mp3File = req.files?.mp3?.[0];
-    if (!mp3File) return res.status(400).json({ error: "mp3 파일 누락" });
+    const audioFile = req.files?.audio?.[0] || req.files?.mp3?.[0];
+    if (!audioFile) return res.status(400).json({ error: "음원 파일 누락 (mp3/mp4)" });
 
     let lrcText = "";
     const jsonFile = req.files?.json?.[0];
     if (jsonFile) {
-      try {
-        const meta = JSON.parse(jsonFile.buffer.toString("utf8"));
-        if (typeof meta?.lyrics === "string") lrcText = meta.lyrics;
-      } catch {}
+      const meta = looseParseMeta(jsonFile.buffer.toString("utf8"));
+      if (typeof meta?.lyrics === "string") lrcText = meta.lyrics;
     }
 
-    const tmp = join(JOBS_DIR, `suggest-${randomUUID()}.mp3`);
+    const aExt = extname(audioFile.originalname || "").toLowerCase() === ".mp4" ? "mp4" : "mp3";
+    const tmp = join(JOBS_DIR, `suggest-${randomUUID()}.${aExt}`);
     try {
-      writeFileSync(tmp, mp3File.buffer);
+      writeFileSync(tmp, audioFile.buffer);
       const { suggestions } = suggestShortsStarts({
         mp3Path: tmp,
         lrcText,

@@ -58,18 +58,18 @@
 <body>
 <div class="wrap">
   <h1>오둥이 하루</h1>
-  <div class="sub">이미지 + mp3 + JSON 첨부 → 16:9 렌더링 → 유튜브 업로드</div>
+  <div class="sub">이미지 + 음원(mp3/mp4) + JSON 첨부 → 16:9/쇼츠 렌더링 → 유튜브 업로드</div>
 
   <!-- STEP 1: 자산 -->
   <div class="card" id="cardPick">
     <div class="step">STEP 01 · 에셋</div>
     <div class="drop" id="drop">
-      <b>이미지 + mp3 + JSON 파일 3개를 끌어다 놓거나</b><br/>클릭해서 선택
-      <input id="file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.mp3,.json" multiple class="hide" />
+      <b>이미지 + 음원(mp3/mp4) + JSON 3개를 끌어다 놓거나</b><br/>클릭해서 선택
+      <input id="file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.mp3,.mp4,.json,.js,.mjs,.txt" multiple class="hide" />
     </div>
     <div class="files">
       <div class="pill" id="pImg">이미지 — 미선택</div>
-      <div class="pill" id="pMp3">mp3 — 미선택</div>
+      <div class="pill" id="pAud">음원 — 미선택</div>
       <div class="pill" id="pJson">json — 미선택</div>
     </div>
     <label>포맷</label>
@@ -126,7 +126,20 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let imgFile = null, mp3File = null, jsonFile = null, jobId = null;
+let imgFile = null, audFile = null, jsonFile = null, jobId = null;
+
+/* 순수 JSON / export default {...} / metadata.js 관용 파싱 (제목 미리보기용) */
+function looseParse(text){
+  let t = String(text||"").replace(/^﻿/,"");
+  try{ return JSON.parse(t); }catch(e){}
+  t = t.replace(/\/\*[\s\S]*?\*\//g,"")
+       .replace(/^\s*\/\/.*$/gm,"")
+       .replace(/^\s*export\s+default\s*/m,"")
+       .replace(/^\s*module\.exports\s*=\s*/m,"")
+       .trim().replace(/;\s*$/,"");
+  try{ return JSON.parse(t); }catch(e){}
+  try{ return Function('"use strict";return ('+t+');')(); }catch(e){ return null; }
+}
 
 /* ---- 파일 선택 ---- */
 const drop = $("drop"), fileInput = $("file");
@@ -140,24 +153,22 @@ function handleFiles(list){
   for(const f of list){
     const n = f.name.toLowerCase();
     if(/\.(png|jpe?g|webp|gif)$/.test(n)) imgFile = f;
-    else if(n.endsWith(".mp3")) mp3File = f;
-    else if(n.endsWith(".json")) jsonFile = f;
+    else if(/\.(mp3|mp4)$/.test(n)) audFile = f;
+    else if(/\.(json|js|mjs|txt)$/.test(n)) jsonFile = f;
   }
   $("pImg").textContent = imgFile ? "이미지 · " + imgFile.name : "이미지 — 미선택";
   $("pImg").classList.toggle("ok", !!imgFile);
-  $("pMp3").textContent = mp3File ? "mp3 · " + mp3File.name : "mp3 — 미선택";
-  $("pMp3").classList.toggle("ok", !!mp3File);
+  $("pAud").textContent = audFile ? "음원 · " + audFile.name : "음원 — 미선택";
+  $("pAud").classList.toggle("ok", !!audFile);
   $("pJson").textContent = jsonFile ? "json · " + jsonFile.name : "json — 미선택";
   $("pJson").classList.toggle("ok", !!jsonFile);
-  $("btnRender").disabled = !(imgFile && mp3File && jsonFile);
-  /* 제목 미리보기: JSON.title */
+  $("btnRender").disabled = !(imgFile && audFile && jsonFile);
+  /* 제목 미리보기: JSON / export default {...} / metadata.js 관용 파싱 */
   if(jsonFile){
     const r = new FileReader();
     r.onload = () => {
-      try{
-        const j = JSON.parse(String(r.result));
-        if(j && j.title) $("title").value = String(j.title);
-      }catch(e){ /* JSON 파싱 실패 무시 */ }
+      const j = looseParse(String(r.result));
+      if(j && j.title) $("title").value = String(j.title);
     };
     r.readAsText(jsonFile);
   }
@@ -173,14 +184,14 @@ document.querySelectorAll('input[name=fmt]').forEach(r=>{
 
 /* ---- 쇼츠 추천 시작 지점 (100% 로컬 분석) ---- */
 $("btnSuggest").onclick = async () => {
-  if(!mp3File){ alert("먼저 mp3 파일을 선택하세요"); return; }
+  if(!audFile){ alert("먼저 음원(mp3/mp4) 파일을 선택하세요"); return; }
   const b = $("btnSuggest");
   b.disabled = true; b.textContent = "🎯 분석 중... (음원·가사)";
   $("sugWrap").classList.remove("hide");
   $("sugChips").innerHTML = ""; $("sugMsg").textContent = "";
   try{
     const fd = new FormData();
-    fd.append("mp3", mp3File);
+    fd.append("audio", audFile);
     if(jsonFile) fd.append("json", jsonFile);
     const r = await fetch("/suggest-shorts", { method:"POST", body:fd });
     const j = await r.json();
@@ -213,7 +224,7 @@ $("btnRender").onclick = async () => {
   $("cardRender").classList.remove("hide");
   const fd = new FormData();
   fd.append("image", imgFile);
-  fd.append("mp3", mp3File);
+  fd.append("audio", audFile);
   fd.append("json", jsonFile);
   fd.append("title", $("title").value.trim());
   const fmt = document.querySelector('input[name=fmt]:checked').value;

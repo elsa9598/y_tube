@@ -2,10 +2,10 @@
 /**
  * Remotion props 생성기 — 입력 모드.
  *
- * [모드 0] 이미지 + mp3 + JSON (현재 주력 워크플로우):
- *   node scripts/gen-props.mjs --image "<...>.png" --mp3 "<...>.mp3" --json "<...>.json" [--out props.json]
- *   → 사장님이 만든 이미지를 변형 없이 그대로 사용 (mp4 프레임 추출 X)
- *   → mp3 음원을 오디오 트랙으로 사용
+ * [모드 0] 이미지 + 음원(mp3|mp4) + JSON (현재 주력 워크플로우):
+ *   node scripts/gen-props.mjs --image "<...>.png" --audio "<...>.mp3|.mp4" --json "<...>.json" [--out props.json]
+ *   → 사장님이 만든 이미지를 변형 없이 그대로 사용 (음원이 mp4여도 프레임 추출 X)
+ *   → 음원의 오디오 트랙 사용 (mp3 그대로 / mp4는 AAC 트랙)
  *   → JSON.lyrics(LRC 큰 문자열) 파싱, JSON.title → 타이틀
  *
  * [모드 1] 곡 폴더:
@@ -73,24 +73,28 @@ function parseLrc(content) {
       merged.push({ t: ln.t, text: ln.text });
     }
   }
-  /* 한국어 라인 + 바로 뒤 영어 라인(별도 타임스탬프)을 한 덩어리로 묶음.
-     사장님 JSON은 한/영을 각각 다른 시각으로 줌 → 따로 하이라이트되면
-     영어가 늦게 뜨고 음원과 어긋남.
-     → 영어(위) + 한국어(아래) 한 블록으로, 한국어(=실제 부르는) 시각에 동시 하이라이트. */
+  /* 한 라인 + 바로 뒤 라인이 (한↔영) 짝이면 한 블록으로 묶음. 순서 무관:
+       한국어→영어  / 영어→한국어  둘 다 지원 (사장님 JSON·metadata.js 형식 차이)
+     표시는 항상 영어(위) / 한국어(아래), 하이라이트 시각은 더 이른(=먼저 부르는) 라인.
+     추임새·마커( (...)로만 된 라인 )는 짝짓지 않고 단독 유지. */
   const hasHangul = (s) => /[가-힣]/.test(s);
+  const isLyric = (s) =>
+    /[A-Za-z가-힣]/.test(s) && !/^\(.*\)$/.test(s.trim());
   const paired = [];
   for (let i = 0; i < merged.length; i++) {
     const cur = merged[i];
     const next = merged[i + 1];
     if (
       next &&
-      hasHangul(cur.text) &&
-      !hasHangul(next.text) &&
+      isLyric(cur.text) &&
+      isLyric(next.text) &&
+      hasHangul(cur.text) !== hasHangul(next.text) && // 정확히 한 쪽만 한국어
       next.t - cur.t <= 6
     ) {
-      /* cur=한국어, next=영어 → 영어 위 / 한국어 아래, 시각은 한국어(더 이른) */
-      paired.push({ t: cur.t, text: next.text + "\n" + cur.text });
-      i++; // 영어 라인 소비
+      const ko = hasHangul(cur.text) ? cur.text : next.text;
+      const en = hasHangul(cur.text) ? next.text : cur.text;
+      paired.push({ t: cur.t, text: en + "\n" + ko }); // 영어 위 / 한국어 아래
+      i++; // 짝 라인 소비
     } else {
       paired.push(cur);
     }
@@ -98,15 +102,41 @@ function parseLrc(content) {
   return paired;
 }
 
-/** metadata.js(ESM export default) 또는 .json 파일 → 객체 */
+/** 순수 JSON / `export default {...}` / `module.exports = {...}` / `//`·`/* *\/` 주석
+    섞인 metadata.js 를 모두 객체로. (서버는 업로드 파일을 meta.json 으로 저장하므로
+    확장자만으론 형식을 알 수 없음 → 내용으로 관용 파싱) */
+function looseParseMeta(text) {
+  let t = String(text).replace(/^﻿/, "");
+  try {
+    return JSON.parse(t);
+  } catch {}
+  /* 주석·모듈 래퍼 제거 후 재시도 */
+  t = t
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/^\s*export\s+default\s*/m, "")
+    .replace(/^\s*module\.exports\s*=\s*/m, "")
+    .trim()
+    .replace(/;\s*$/, "");
+  try {
+    return JSON.parse(t);
+  } catch {}
+  /* 최후: JS 객체 리터럴로 평가 (외부 통신 없음, 로컬 신뢰 입력) */
+  return Function('"use strict";return (' + t + ");")();
+}
+
+/** metadata.js(ESM export default) 또는 .json/.txt 파일 → 객체 (관용 파싱) */
 async function loadMeta(p) {
   const ext = extname(p).toLowerCase();
-  if (ext === ".json") {
-    return JSON.parse(readFileSync(p, "utf8"));
+  if (ext === ".js" || ext === ".mjs") {
+    try {
+      const mod = await import(pathToFileURL(resolve(p)).href);
+      return mod.default ?? mod;
+    } catch {
+      /* import 실패(확장자/구문) → 텍스트 관용 파싱 폴백 */
+    }
   }
-  /* .js / .mjs : dynamic import */
-  const mod = await import(pathToFileURL(resolve(p)).href);
-  return mod.default ?? mod;
+  return looseParseMeta(readFileSync(p, "utf8"));
 }
 
 /** Remotion 번들 ffmpeg(.exe) 경로 탐색 (node_modules/@remotion/compositor-... 안) */
@@ -166,6 +196,7 @@ function parseArgs(argv) {
     if (k === "--folder") a.folder = argv[++i];
     else if (k === "--image") a.image = argv[++i];
     else if (k === "--mp3") a.mp3 = argv[++i];
+    else if (k === "--audio") a.mp3 = argv[++i]; // mp3/mp4 공용 (mp4면 오디오 트랙 사용)
     else if (k === "--shorts") a.shorts = true;
     else if (k === "--shorts-start") a.shortsStart = argv[++i];
     else if (k === "--shorts-len") a.shortsLen = argv[++i];
