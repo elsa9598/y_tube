@@ -237,9 +237,20 @@ $("btnRender").onclick = async () => {
   pollRender();
 };
 
+let pollMiss = 0;
 async function pollRender(){
   try{
-    const s = await (await fetch("/status/"+jobId)).json();
+    const res = await fetch("/status/"+jobId);
+    if(res.status === 404){
+      /* 서버 재시작 등으로 작업 정보 소실 → 무한 폴링 중단 */
+      if(++pollMiss >= 3){
+        $("rMsg").textContent = "❌ 작업 정보가 없습니다(서버 재시작 등). 페이지를 새로고침 후 다시 렌더하세요.";
+        return;
+      }
+      setTimeout(pollRender, 2000); return;
+    }
+    pollMiss = 0;
+    const s = await res.json();
     const p = Math.round(s.progress||0);
     $("rPct").textContent = p+"%";
     $("rBar").style.width = p+"%";
@@ -253,7 +264,7 @@ async function pollRender(){
       return;
     }
     if(s.state === "error"){ $("rMsg").textContent = "❌ "+(s.message||"렌더 실패"); return; }
-  }catch(e){ /* 일시 오류 무시 */ }
+  }catch(e){ /* 일시 네트워크 오류만 재시도 */ }
   setTimeout(pollRender, 2000);
 }
 
@@ -277,9 +288,19 @@ $("btnUpload").onclick = async () => {
   pollUpload();
 };
 
+let pollUpMiss = 0;
 async function pollUpload(){
   try{
-    const s = await (await fetch("/status/"+jobId)).json();
+    const res = await fetch("/status/"+jobId);
+    if(res.status === 404){
+      if(++pollUpMiss >= 3){
+        $("uMsg").textContent = "❌ 작업 정보가 없습니다(서버 재시작 등). 새로고침 후 다시 시도하세요.";
+        $("btnUpload").disabled=false; return;
+      }
+      setTimeout(pollUpload, 2000); return;
+    }
+    pollUpMiss = 0;
+    const s = await res.json();
     const u = s.upload;
     if(u){
       const p = Math.round(u.progress||0);

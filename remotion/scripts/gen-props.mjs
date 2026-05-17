@@ -63,12 +63,22 @@ function parseLrc(content) {
     }
     for (const t of tags) lines.push({ t, text });
   }
-  /* 같은 시각(±0.05s) 라인 병합 */
+  const hasHangul = (s) => /[가-힣]/.test(s);
+
+  /* 같은 시각(±0.05s) 라인 병합. 한/영 짝이면 영어(위)/한국어(아래)로 정렬 */
   const merged = [];
   for (const ln of lines.sort((a, b) => a.t - b.t)) {
     const last = merged[merged.length - 1];
     if (last && Math.abs(last.t - ln.t) < 0.05) {
-      last.text = last.text + "\n" + ln.text;
+      const a = last.text,
+        b = ln.text;
+      if (hasHangul(a) !== hasHangul(b)) {
+        const ko = hasHangul(a) ? a : b;
+        const en = hasHangul(a) ? b : a;
+        last.text = en + "\n" + ko;
+      } else {
+        last.text = a + "\n" + b;
+      }
     } else {
       merged.push({ t: ln.t, text: ln.text });
     }
@@ -77,7 +87,6 @@ function parseLrc(content) {
        한국어→영어  / 영어→한국어  둘 다 지원 (사장님 JSON·metadata.js 형식 차이)
      표시는 항상 영어(위) / 한국어(아래), 하이라이트 시각은 더 이른(=먼저 부르는) 라인.
      추임새·마커( (...)로만 된 라인 )는 짝짓지 않고 단독 유지. */
-  const hasHangul = (s) => /[가-힣]/.test(s);
   const isLyric = (s) =>
     /[A-Za-z가-힣]/.test(s) && !/^\(.*\)$/.test(s.trim());
   const paired = [];
