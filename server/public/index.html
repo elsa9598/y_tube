@@ -126,6 +126,32 @@
     <div class="msg" id="uMsg"></div>
     <a class="yt hide" id="ytLink" target="_blank" rel="noopener"></a>
   </div>
+
+  <!-- STEP 4: 네이버 블로그 -->
+  <div class="card hide" id="cardBlog">
+    <div class="step">STEP 04 · 네이버 블로그 (오둥이 감성음악)</div>
+    <label>주제 (이 주제를 철학적으로 해석합니다)</label>
+    <textarea id="bTopic" maxlength="300" placeholder="예: 겨울 아침의 쓸쓸함을 견디는 법"></textarea>
+    <label>철학자 (카테고리 + 명언 한 줄)</label>
+    <div style="display:flex;gap:10px">
+      <label class="fmt" style="flex:1"><input type="radio" name="phil" value="nietzsche" checked /> 니체</label>
+      <label class="fmt" style="flex:1"><input type="radio" name="phil" value="schopenhauer" /> 쇼펜하우어</label>
+    </div>
+    <div style="margin-top:14px">
+      <button class="ghost" id="btnDraft">📝 AI 초안 생성 (로컬)</button>
+    </div>
+    <div id="draftWrap" class="hide" style="margin-top:14px">
+      <label>제목</label>
+      <input type="text" id="bTitle" />
+      <label>본문 (수정 가능)</label>
+      <textarea id="bText" style="min-height:220px"></textarea>
+      <div class="msg" id="bMeta"></div>
+      <div style="margin-top:16px">
+        <button class="alt" id="btnBlog">네이버 블로그 게시 (브라우저 자동)</button>
+      </div>
+      <div class="msg" id="bMsg" style="margin-top:8px"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -309,6 +335,7 @@ async function pollRender(){
       $("preview").src = "/download/"+jobId;
       $("preview").classList.remove("hide");
       $("cardUp").classList.remove("hide");
+      $("cardBlog").classList.remove("hide");
       $("cardUp").scrollIntoView({behavior:"smooth"});
       return;
     }
@@ -366,6 +393,61 @@ async function pollUpload(){
     }
   }catch(e){}
   setTimeout(pollUpload, 2000);
+}
+
+/* ---- 네이버 블로그 ---- */
+$("btnDraft").onclick = async () => {
+  const topic = $("bTopic").value.trim();
+  if(!topic){ alert("주제를 입력하세요"); return; }
+  const b = $("btnDraft");
+  b.disabled = true; b.textContent = "📝 로컬 AI 생성 중... (수십 초)";
+  try{
+    const phil = document.querySelector('input[name=phil]:checked').value;
+    const r = await fetch("/blog/draft", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jobId, topic, philosopher: phil })
+    });
+    const j = await r.json();
+    if(j.error){ alert("초안 생성 실패: "+j.error); return; }
+    $("bTitle").value = j.title || "";
+    $("bText").value = j.text || "";
+    $("bMeta").textContent = "카테고리: "+j.category+" · "+j.phName+" 명언: "+(j.quote&&j.quote.line||"")+" · 태그 "+(j.tags||[]).length+"개";
+    $("draftWrap").classList.remove("hide");
+  }catch(e){ alert("오류: "+e); }
+  finally{ b.disabled=false; b.textContent="📝 AI 초안 생성 (로컬)"; }
+};
+
+$("btnBlog").onclick = async () => {
+  const title = $("bTitle").value.trim();
+  const text = $("bText").value.trim();
+  if(!title || !text){ alert("제목/본문을 채우세요"); return; }
+  if(!confirm("브라우저가 열리고 네이버 로그인을 시도합니다.\n캡차/2단계 인증이 뜨면 그 창에서 직접 처리하세요. 진행할까요?")) return;
+  $("btnBlog").disabled = true;
+  $("bMsg").textContent = "시작...";
+  try{
+    const r = await fetch("/blog/publish", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jobId, title, text })
+    });
+    const j = await r.json();
+    if(!j.started){ $("bMsg").textContent = "오류: "+JSON.stringify(j); $("btnBlog").disabled=false; return; }
+    pollBlog();
+  }catch(e){ $("bMsg").textContent = "오류: "+e; $("btnBlog").disabled=false; }
+};
+
+async function pollBlog(){
+  try{
+    const res = await fetch("/status/"+jobId);
+    if(res.ok){
+      const s = await res.json();
+      const bl = s.blog;
+      if(bl){
+        $("bMsg").textContent = (bl.state==="error"?"❌ ":bl.state==="done"?"✅ ":"⏳ ")+(bl.message||"");
+        if(bl.state==="done" || bl.state==="error"){ $("btnBlog").disabled=false; return; }
+      }
+    }
+  }catch(e){}
+  setTimeout(pollBlog, 2500);
 }
 </script>
 </body>

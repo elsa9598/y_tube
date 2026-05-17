@@ -33,6 +33,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { uploadToYouTube } from "./youtube.mjs";
 import { suggestShortsStarts } from "./suggest.mjs";
+import { generateBlogDraft, composeBlogText, postToNaverBlog } from "./blog.mjs";
 import { rmSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -410,6 +411,71 @@ app.get("/status/:id", (req, res) => {
   if (!job) return res.status(404).json({ error: "job 없음" });
   const { outputPath, ...safe } = job;
   res.json({ ...safe, hasOutput: !!outputPath });
+});
+
+/**
+ * POST /blog/draft  { jobId?, songTitle?, topic, philosopher }
+ *   로컬 LLM 으로 블로그 초안 생성 → { title, bodyLines, tags, quote, text, ... }
+ */
+app.post("/blog/draft", async (req, res) => {
+  try {
+    const topic = String(req.body?.topic ?? "").trim();
+    if (!topic) return res.status(400).json({ error: "주제(topic) 필수" });
+    const philosopher =
+      req.body?.philosopher === "schopenhauer" ? "schopenhauer" : "nietzsche";
+    const job = req.body?.jobId ? jobs.get(req.body.jobId) : null;
+    const songTitle =
+      String(req.body?.songTitle ?? "").trim() ||
+      (job && job.title) ||
+      "오둥이의 노래";
+    const d = await generateBlogDraft({ topic, philosopher, songTitle });
+    res.json({ ...d, text: composeBlogText(d) });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message ?? e) });
+  }
+});
+
+/**
+ * POST /blog/publish  { jobId, title, text }
+ *   job 의 렌더 영상(쇼츠 권장)을 첨부 대상으로, 네이버 블로그 글쓰기 자동화.
+ *   비동기 시작 → /status/:id 의 job.blog 로 추적.
+ */
+app.post("/blog/publish", (req, res) => {
+  const job = req.body?.jobId ? jobs.get(req.body.jobId) : null;
+  if (!job) return res.status(404).json({ error: "job 없음 (먼저 렌더하세요)" });
+  const videoPath = job.savedPath || job.outputPath;
+  if (!videoPath || !existsSync(videoPath)) {
+    return res.status(404).json({ error: "렌더 영상 없음" });
+  }
+  const title = String(req.body?.title ?? "").trim();
+  const text = String(req.body?.text ?? "").trim();
+  if (!title || !text) return res.status(400).json({ error: "title/text 필수" });
+  if (job.blog && job.blog.state === "running") {
+    return res.status(409).json({ error: "이미 게시 진행 중" });
+  }
+  job.blog = { state: "running", message: "시작...", url: null };
+  postToNaverBlog({
+    title,
+    text,
+    videoPath,
+    category: "오둥이 감성음악",
+    onStep: (m) => {
+      job.blog.message = m;
+      console.log(`[blog ${req.body.jobId}] ${m}`);
+    },
+  })
+    .then((r) => {
+      job.blog.state = "done";
+      job.blog.message = r.typed
+        ? "에디터에 제목·본문 입력됨 — 창에서 영상 첨부·카테고리·발행 마무리"
+        : "글쓰기 창 열림 — 붙여넣기용 본문으로 작성하세요";
+    })
+    .catch((e) => {
+      job.blog.state = "error";
+      job.blog.message = String(e.message ?? e);
+      console.error(`[blog] ❌`, e);
+    });
+  res.json({ started: true });
 });
 
 /**

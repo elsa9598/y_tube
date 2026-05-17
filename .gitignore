@@ -77,3 +77,6 @@ Thumbs.db
 
 # OAuth 데스크톱 클라이언트 (client_secret 포함) — 절대 커밋 X
 oauth.json
+
+# 네이버 자동화 세션(로그인 쿠키 — 절대 커밋 금지)
+server/.naver-profile/
