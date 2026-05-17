@@ -1,18 +1,22 @@
 #!/usr/bin/env node
 /**
- * Remotion props 생성기 — 두 가지 입력 모드.
+ * Remotion props 생성기 — 입력 모드.
+ *
+ * [모드 0] 이미지 + mp3 + JSON (현재 주력 워크플로우):
+ *   node scripts/gen-props.mjs --image "<...>.png" --mp3 "<...>.mp3" --json "<...>.json" [--out props.json]
+ *   → 사장님이 만든 이미지를 변형 없이 그대로 사용 (mp4 프레임 추출 X)
+ *   → mp3 음원을 오디오 트랙으로 사용
+ *   → JSON.lyrics(LRC 큰 문자열) 파싱, JSON.title → 타이틀
  *
  * [모드 1] 곡 폴더:
  *   node scripts/gen-props.mjs --folder "D:\...\musics\<곡명>"
  *   → 폴더에서 thumbnail.jpg, lyrics.lrc, *.mp4 자동 검출
  *
- * [모드 2] mp4 + JSON (사장님 실제 워크플로우):
- *   node scripts/gen-props.mjs --mp4 "<...>.mp4" --json "<metadata.js|.json>" [--out props.json]
+ * [모드 2] mp4 + lrc / [모드 3] mp4 + JSON (하위호환):
+ *   node scripts/gen-props.mjs --mp4 "<...>.mp4" --lrc "<...>.lrc" [--out props.json]
  *   → mp4 첫 프레임을 1:1 이미지로 추출
- *   → JSON.lyrics(LRC 큰 문자열, "eng / kor" 형식) 파싱
- *   → JSON.title → 타이틀
  *
- * 공통: public/current/{image.jpg, audio.mp4} 복사, props.json 출력.
+ * 공통: public/current/{image.jpg, audio.mp3|audio.mp4} 복사, props.json 출력.
  */
 import {
   copyFileSync,
@@ -114,6 +118,8 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i];
     if (k === "--folder") a.folder = argv[++i];
+    else if (k === "--image") a.image = argv[++i];
+    else if (k === "--mp3") a.mp3 = argv[++i];
     else if (k === "--mp4") a.mp4 = argv[++i];
     else if (k === "--lrc") a.lrc = argv[++i];
     else if (k === "--title") a.title = argv[++i];
@@ -128,12 +134,26 @@ const args = parseArgs(process.argv);
 const pubDir = resolve("public", "current");
 const outPath = resolve(args.out ?? "sample-props.json");
 
-let imageSrcPath; // 추출/복사 전 원본 이미지 (없으면 mp4 추출)
-let mp4SrcPath;
+let imageSrcPath; // 원본 이미지 (있으면 그대로 복사, 없으면 mp4 첫 프레임 추출)
+let mp4SrcPath; // mp4 첫 프레임 추출용 (구 모드만)
+let audioSrcPath; // 실제 오디오 소스 (mp3 또는 mp4)
 let lrcText;
 let title;
 
-if (args.mp4 && args.lrc) {
+if (args.image && args.mp3 && args.json) {
+  /* ===== 모드 0: 이미지 + mp3 + JSON (현재 주력 워크플로우) =====
+     사장님이 만든 이미지를 Gemini mp4 변형 없이 그대로 사용 */
+  const meta = await loadMeta(resolve(args.json));
+  if (!meta || typeof meta.lyrics !== "string") {
+    console.error("JSON에 lyrics(문자열) 필드가 없습니다:", Object.keys(meta ?? {}));
+    process.exit(1);
+  }
+  lrcText = meta.lyrics;
+  title = (meta.title ?? "오둥이의 하루").toString();
+  imageSrcPath = resolve(args.image);
+  audioSrcPath = resolve(args.mp3);
+  mp4SrcPath = null;
+} else if (args.mp4 && args.lrc) {
   /* ===== 모드 2: mp4 + lyrics.lrc (사장님 실제 워크플로우) ===== */
   mp4SrcPath = resolve(args.mp4);
   lrcText = readFileSync(resolve(args.lrc), "utf8");
@@ -176,19 +196,23 @@ if (args.mp4 && args.lrc) {
 } else {
   console.error(
     "사용법:\n" +
+      '  node scripts/gen-props.mjs --image "<...png>" --mp3 "<...mp3>" --json "<...json>"\n' +
       '  node scripts/gen-props.mjs --folder "<곡폴더>"\n' +
-      '  node scripts/gen-props.mjs --mp4 "<...mp4>" --json "<metadata.js|.json>" [--out props.json]'
+      '  node scripts/gen-props.mjs --mp4 "<...mp4>" --lrc "<...lrc>" [--out props.json]'
   );
   process.exit(1);
 }
+
+/* 구 모드(mp4 기반)는 오디오 소스 = mp4. 새 모드는 위에서 mp3로 이미 설정됨 */
+audioSrcPath = audioSrcPath ?? mp4SrcPath;
 
 /* --title 이 명시되면 모든 모드보다 최우선 (서버가 원본 곡 제목 주입) */
 if (args.title && args.title.trim()) {
   title = args.title.trim();
 }
 
-if (!existsSync(mp4SrcPath)) {
-  console.error("mp4 파일 없음:", mp4SrcPath);
+if (!audioSrcPath || !existsSync(audioSrcPath)) {
+  console.error("오디오 파일 없음:", audioSrcPath);
   process.exit(1);
 }
 
@@ -199,21 +223,26 @@ const durationSec = Math.ceil(lastLrcTime + 12);
 /* public/current/ 비우고 자산 배치 */
 rmSync(pubDir, { recursive: true, force: true });
 mkdirSync(pubDir, { recursive: true });
-const audDst = join(pubDir, "audio.mp4");
+const audioIsMp3 = /\.mp3$/i.test(audioSrcPath);
+const audDstName = audioIsMp3 ? "audio.mp3" : "audio.mp4";
+const audDst = join(pubDir, audDstName);
 const imgDst = join(pubDir, "image.jpg");
-copyFileSync(mp4SrcPath, audDst);
+copyFileSync(audioSrcPath, audDst);
 
 if (imageSrcPath && existsSync(imageSrcPath)) {
-  /* 원본 1:1 이미지가 있으면 그대로 (jpg/png 무관, .jpg 이름으로) */
+  /* 원본 이미지가 있으면 변형 없이 그대로 (jpg/png 무관, .jpg 이름으로) */
   copyFileSync(imageSrcPath, imgDst);
-} else {
-  /* mp4 첫 프레임 추출 (사장님 mp4는 1024×1024 1:1) */
+} else if (mp4SrcPath) {
+  /* 구 모드: mp4 첫 프레임 추출 */
   extractFirstFrame(mp4SrcPath, imgDst);
+} else {
+  console.error("이미지 소스 없음 (--image 또는 mp4 필요):", imageSrcPath);
+  process.exit(1);
 }
 
 const props = {
   imageUrl: "current/image.jpg",
-  audioUrl: "current/audio.mp4",
+  audioUrl: `current/${audDstName}`,
   durationSec,
   title,
   lrc: lrcLines,
@@ -222,9 +251,17 @@ writeFileSync(outPath, JSON.stringify(props, null, 2), "utf8");
 
 console.log(`✅ 생성: ${outPath}`);
 console.log(
-  `   모드: ${args.lrc ? "mp4+lrc" : args.json ? "mp4+JSON" : "곡폴더"}`
+  `   모드: ${
+    args.image && args.mp3
+      ? "이미지+mp3+JSON"
+      : args.lrc
+      ? "mp4+lrc"
+      : args.json
+      ? "mp4+JSON"
+      : "곡폴더"
+  }`
 );
-console.log(`   오디오: ${mp4SrcPath}`);
+console.log(`   오디오: ${audioSrcPath}`);
 console.log(
   `   이미지: ${imageSrcPath && existsSync(imageSrcPath) ? imageSrcPath : "(mp4 첫 프레임 추출)"}`
 );

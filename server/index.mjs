@@ -2,11 +2,11 @@
  * y_tube 렌더링 서버.
  *
  * 흐름:
- *   1. POST /render (multipart mp4 + json)
- *      → jobs/<id>/ 에 audio.mp4, meta.json 저장
+ *   1. POST /render (multipart image + mp3 + json)
+ *      → jobs/<id>/ 에 image.<ext>, audio.mp3, meta.json 저장
  *      → 시리얼 큐에 enqueue, jobId 반환
  *   2. 워커가 순서대로:
- *        gen-props.mjs --mp4 --json --out  (mp4 첫 프레임 추출 + lyrics 파싱)
+ *        gen-props.mjs --image --mp3 --json --out  (이미지 원본 그대로 + lyrics 파싱)
  *        npx remotion render Cartoon output.mp4 --props=...
  *        stdout 파싱으로 진행률 갱신
  *   3. GET /status/:id 폴링 → {state, progress, message}
@@ -29,7 +29,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { uploadToYouTube } from "./youtube.mjs";
 
@@ -82,23 +82,26 @@ async function processNext() {
     return processNext();
   }
   const dir = join(JOBS_DIR, id);
-  const mp4Path = join(dir, "audio.mp4");
-  const lrcPath = join(dir, "lyrics.lrc");
+  const imagePath = join(dir, job.imageName || "image.jpg");
+  const mp3Path = join(dir, "audio.mp3");
+  const jsonPath = join(dir, "meta.json");
   const propsPath = join(dir, "props.json");
   const outPath = join(dir, "output.mp4");
 
   try {
     job.state = "preparing";
     job.progress = 0;
-    job.message = "첫 프레임 추출 + 가사 파싱 중...";
+    job.message = "이미지 배치 + 가사 파싱 중...";
     await runCmd(
       "node",
       [
         "scripts/gen-props.mjs",
-        "--mp4",
-        mp4Path,
-        "--lrc",
-        lrcPath,
+        "--image",
+        imagePath,
+        "--mp3",
+        mp3Path,
+        "--json",
+        jsonPath,
         ...(job.title ? ["--title", job.title] : []),
         "--out",
         propsPath,
@@ -258,29 +261,39 @@ app.get("/health", (_req, res) => {
 /**
  * POST /render
  *   multipart fields:
- *     - mp4  (file, required)
- *     - lrc  (file, required) — lyrics.lrc 표준 LRC
+ *     - image (file, required) — 사장님이 만든 1:1 이미지 (png/jpg)
+ *     - mp3   (file, required) — 음원
+ *     - json  (file, required) — { title, lyrics(LRC 큰 문자열) }
  *   응답: { jobId, state }
  */
 app.post(
   "/render",
   upload.fields([
-    { name: "mp4", maxCount: 1 },
-    { name: "lrc", maxCount: 1 },
+    { name: "image", maxCount: 1 },
+    { name: "mp3", maxCount: 1 },
+    { name: "json", maxCount: 1 },
   ]),
   (req, res) => {
-    const mp4File = req.files?.mp4?.[0];
-    const lrcFile = req.files?.lrc?.[0];
-    if (!mp4File) return res.status(400).json({ error: "mp4 파일 누락" });
-    if (!lrcFile) return res.status(400).json({ error: "lrc 파일 누락" });
+    const imageFile = req.files?.image?.[0];
+    const mp3File = req.files?.mp3?.[0];
+    const jsonFile = req.files?.json?.[0];
+    if (!imageFile) return res.status(400).json({ error: "이미지 파일 누락" });
+    if (!mp3File) return res.status(400).json({ error: "mp3 파일 누락" });
+    if (!jsonFile) return res.status(400).json({ error: "json 파일 누락" });
 
     const id = randomUUID();
     const dir = join(JOBS_DIR, id);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "audio.mp4"), mp4File.buffer);
-    writeFileSync(join(dir, "lyrics.lrc"), lrcFile.buffer);
 
-    /* UI가 보낸 곡 제목 (하단 타이틀 + out 파일명). 없으면 gen-props가 LRC[ti:]/파일명 */
+    /* 이미지 확장자 보존 (.png/.jpg/.jpeg/.webp 그대로) */
+    const extRaw = extname(imageFile.originalname || "").toLowerCase();
+    const imageName =
+      "image" + (/^\.(png|jpe?g|webp|gif)$/.test(extRaw) ? extRaw : ".jpg");
+    writeFileSync(join(dir, imageName), imageFile.buffer);
+    writeFileSync(join(dir, "audio.mp3"), mp3File.buffer);
+    writeFileSync(join(dir, "meta.json"), jsonFile.buffer);
+
+    /* 제목: UI가 JSON.title 을 읽어 보냄. 없으면 gen-props가 JSON.title 사용 */
     const title = String(req.body?.title ?? "").trim();
 
     jobs.set(id, {
@@ -288,12 +301,15 @@ app.post(
       progress: 0,
       message: "대기 중",
       title,
+      imageName,
       createdAt: new Date().toISOString(),
     });
     enqueue(id);
 
     console.log(
-      `[job ${id}] queued — mp4 ${(mp4File.size / 1024 / 1024).toFixed(1)} MB`
+      `[job ${id}] queued — image ${(imageFile.size / 1024 / 1024).toFixed(
+        1
+      )}MB · mp3 ${(mp3File.size / 1024 / 1024).toFixed(1)}MB`
     );
     res.json({ jobId: id, state: "queued" });
   }
@@ -370,7 +386,7 @@ app.get("/download/:id", (req, res) => {
 /* 로컬/네트워크 양쪽에서 접근 가능하게 0.0.0.0 바인드 */
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🎬 y_tube render server  http://0.0.0.0:${PORT}`);
-  console.log(`   POST /render          multipart mp4 + json`);
+  console.log(`   POST /render          multipart image + mp3 + json`);
   console.log(`   GET  /status/:id      진행률 폴링`);
   console.log(`   GET  /download/:id    결과 MP4`);
   console.log(`   POST /upload/:id      유튜브 업로드`);
