@@ -53,6 +53,9 @@
   button.ghost:disabled{color:var(--faint)}
   .chip{background:var(--surfaceAlt);border:1px solid var(--accentSoft);color:var(--txt);
     border-radius:999px;padding:9px 15px;font-size:13px;font-weight:700;cursor:pointer;width:auto}
+  #syncChk{margin-top:12px;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5}
+  #syncChk.ok{background:rgba(40,90,60,.35);border:1px solid #3f7d5a;color:#bfe9cf}
+  #syncChk.bad{background:rgba(120,60,30,.35);border:1px solid #b5703a;color:#ffd9b0}
 </style>
 </head>
 <body>
@@ -72,6 +75,7 @@
       <div class="pill" id="pAud">음원 — 미선택</div>
       <div class="pill" id="pJson">json — 미선택</div>
     </div>
+    <div id="syncChk" class="hide"></div>
     <label>포맷</label>
     <div style="display:flex;gap:10px">
       <label class="fmt" style="flex:1"><input type="radio" name="fmt" value="normal" checked /> 일반 16:9</label>
@@ -169,9 +173,54 @@ function handleFiles(list){
     r.onload = () => {
       const j = looseParse(String(r.result));
       if(j && j.title) $("title").value = String(j.title);
+      window._lastLyrics = (j && typeof j.lyrics === "string") ? j.lyrics : "";
+      checkSync();
     };
     r.readAsText(jsonFile);
   }
+  checkSync();
+}
+
+/* 가사 마지막 타임(초) — [mm:ss(.xx)] 최대값 */
+function lastLrcSec(lyrics){
+  const re = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+  let m, max = 0;
+  while((m = re.exec(lyrics||""))){
+    const s = (+m[1])*60 + (+m[2]) + (m[3] ? parseInt(m[3],10)/Math.pow(10,m[3].length) : 0);
+    if(s > max) max = s;
+  }
+  return max;
+}
+const mmss = (s) => Math.floor(s/60)+":"+String(Math.round(s%60)).padStart(2,"0");
+
+/* 음원 길이 vs 가사 마지막 타임 즉시 점검 (렌더 전, 브라우저에서) */
+function checkSync(){
+  const box = $("syncChk");
+  if(!(audFile && jsonFile && window._lastLyrics !== undefined)){
+    box.classList.add("hide"); return;
+  }
+  const lastLrc = lastLrcSec(window._lastLyrics);
+  if(!lastLrc){ box.classList.add("hide"); return; }
+  const v = document.createElement("video");
+  v.preload = "metadata";
+  const url = URL.createObjectURL(audFile);
+  v.onloadedmetadata = () => {
+    const dur = v.duration;
+    URL.revokeObjectURL(url);
+    if(!isFinite(dur) || dur <= 0){ box.classList.add("hide"); return; }
+    box.classList.remove("hide");
+    if(lastLrc > dur + 2){
+      box.className = "bad";
+      box.innerHTML = "⚠️ <b>JSON 가사 타임이 음원과 안 맞습니다.</b><br/>"+
+        "가사 끝 <b>"+mmss(lastLrc)+"</b> &gt; 음원 <b>"+mmss(dur)+"</b> — 이대로 렌더하면 가사가 어긋납니다. "+
+        "이 곡 JSON을 음원에 맞게 다시 만들어 올리세요.";
+    } else {
+      box.className = "ok";
+      box.innerHTML = "✅ 가사 끝 "+mmss(lastLrc)+" / 음원 "+mmss(dur)+" — 타임 정상. 렌더해도 됩니다.";
+    }
+  };
+  v.onerror = () => { URL.revokeObjectURL(url); box.classList.add("hide"); };
+  v.src = url;
 }
 
 /* ---- 포맷 선택 ---- */
