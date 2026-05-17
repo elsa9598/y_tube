@@ -165,26 +165,6 @@ function extractFirstFrame(mp4Path, outJpg) {
   );
 }
 
-/** 오디오/영상 실제 재생 길이(초). 실패 시 0. */
-function getMediaDurationSec(srcPath) {
-  const ffmpeg = findBundledFfmpeg();
-  if (!ffmpeg) return 0;
-  let out = "";
-  try {
-    execFileSync(ffmpeg, ["-hide_banner", "-i", srcPath], {
-      stdio: ["ignore", "ignore", "pipe"],
-      encoding: "utf8",
-    });
-  } catch (e) {
-    out = (e && e.stderr) ? String(e.stderr) : "";
-  }
-  const m = out.match(/Duration:\s*(\d+):(\d{2}):(\d{2})(?:\.(\d+))?/);
-  if (!m) return 0;
-  return (
-    +m[1] * 3600 + +m[2] * 60 + +m[3] + (m[4] ? parseFloat("0." + m[4]) : 0)
-  );
-}
-
 /** 오디오의 [startSec, startSec+lenSec) 구간을 mp3로 잘라냄 (쇼츠용). */
 function trimAudioToMp3(srcPath, outMp3, startSec, lenSec) {
   const ffmpeg = findBundledFfmpeg();
@@ -317,26 +297,6 @@ if (!audioSrcPath || !existsSync(audioSrcPath)) {
 }
 
 let lrcLines = parseLrc(lrcText);
-
-/* ===== 가사 타임 ↔ 음원 길이 정합 =====
-   AI 생성곡은 가사 LRC 타임이 실제 음원보다 길게(혹은 짧게) 찍힌 경우가 많음.
-   가사 마지막 시각이 음원 길이를 10% 이상 초과하면, 가사 끝이 음원 끝
-   직전(−1.5s)에 오도록 전체 타임을 선형 축소 → 음원과 동기. */
-const audioDurSec = getMediaDurationSec(audioSrcPath);
-let rawLastLrc = lrcLines.length ? lrcLines[lrcLines.length - 1].t : 0;
-let lrcScale = 1;
-if (audioDurSec > 1 && rawLastLrc > audioDurSec * 1.1) {
-  lrcScale = (audioDurSec - 1.5) / rawLastLrc;
-  lrcLines = lrcLines.map((ln) => ({
-    t: +(ln.t * lrcScale).toFixed(3),
-    text: ln.text,
-  }));
-  console.log(
-    `   ⏱ 가사 타임 보정: 가사끝 ${rawLastLrc.toFixed(0)}s > 음원 ${audioDurSec.toFixed(
-      0
-    )}s → ×${lrcScale.toFixed(3)} 축소`
-  );
-}
 const fullLastLrc = lrcLines.length ? lrcLines[lrcLines.length - 1].t : 60;
 
 /* ===== 쇼츠: [start, start+len) 구간만 잘라 0초 기준으로 시프트 ===== */
@@ -359,9 +319,7 @@ if (isShorts) {
   lrcLines = win;
   durationSec = shortsLen;
 } else {
-  /* 음원 길이를 알면 영상 길이 = 음원 길이(가사 끝과 정합). 모르면 가사끝+12 */
-  durationSec =
-    audioDurSec > 1 ? Math.ceil(audioDurSec) : Math.ceil(fullLastLrc + 12);
+  durationSec = Math.ceil(fullLastLrc + 12);
 }
 
 /* public/current/ 비우고 자산 배치 */
@@ -417,11 +375,7 @@ console.log(`   포맷: ${isShorts ? `쇼츠 9:16 (${shortsStart}s~${shortsStart
 console.log(`   LRC 라인 수: ${lrcLines.length}`);
 console.log(
   `   길이: ${durationSec}초 ${
-    isShorts
-      ? "(쇼츠 구간)"
-      : audioDurSec > 1
-      ? `(음원 ${audioDurSec.toFixed(1)}초 정합, 가사끝 ${fullLastLrc.toFixed(1)}초)`
-      : `(LRC 마지막 ${fullLastLrc.toFixed(1)}초 + 12초)`
+    isShorts ? "(쇼츠 구간)" : `(LRC 마지막 ${fullLastLrc.toFixed(1)}초 + 12초)`
   }`
 );
 console.log(`   타이틀: ${title}`);
