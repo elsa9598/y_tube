@@ -47,6 +47,33 @@ export const RemotionRoot: React.FC = () => {
           durationInFrames: Math.max(1, Math.round(props.durationSec * FPS)),
         })}
       />
+      {/* 쇼츠: 9:16 세로. 같은 컴포넌트가 width<height 면 세로 레이아웃 */}
+      <Composition
+        id="Shorts"
+        component={CartoonComposition}
+        schema={CartoonPropsSchema}
+        durationInFrames={FPS * 30}
+        fps={FPS}
+        width={VIDEO_HEIGHT}
+        height={VIDEO_WIDTH}
+        defaultProps={{
+          imageUrl: "https://picsum.photos/seed/odung/1080/1080",
+          audioUrl: "https://www.kozco.com/tech/piano2.wav",
+          durationSec: 30,
+          title: "오둥이의 하루 — 쇼츠",
+          lrc: [
+            { t: 0, text: "Shorts preview line\n쇼츠 미리보기 라인" },
+            { t: 5, text: "second line\n두 번째 가사" },
+            { t: 10, text: "third line\n세 번째 가사" },
+            { t: 15, text: "fourth line\n네 번째 가사" },
+            { t: 20, text: "fifth line\n다섯 번째 가사" },
+            { t: 25, text: "last line\n마지막 라인" },
+          ],
+        }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: Math.max(1, Math.round(props.durationSec * FPS)),
+        })}
+      />
     </>
   );
 };

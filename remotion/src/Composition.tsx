@@ -13,12 +13,11 @@ import {
 import { CartoonProps, COLORS, FPS } from "./types";
 
 /**
- * 16:9 1080p 컴포지션.
- * 레이아웃:
- *  - 배경: 같은 1:1 이미지 cover + blur(60px) + brightness(0.4)
- *  - 좌측 중앙: 1:1 이미지 (880×880, 라운드 24px), 미세 ken-burns 줌
- *  - 우측: LRC 가사 스크롤 — 활성 라인 강조 + 상하 페이드 마스크
- *  - 하단 중앙: 노래 타이틀 (그라디언트 오버레이 위)
+ * 듀얼 레이아웃 컴포지션.
+ *  - 가로(16:9 1920×1080) — 기존 승인 디자인: 좌측 1:1 이미지 + 우측 가사
+ *  - 세로(9:16 1080×1920, 쇼츠) — 상단 정사각 이미지 + 하단 가사 스크롤
+ * 방향은 useVideoConfig 의 width/height 로 자동 판별(높이>너비면 쇼츠).
+ * 공통: 블러 배경, 동일 ken-burns 모션, 하단 중앙 타이틀.
  */
 export const CartoonComposition: React.FC<CartoonProps> = ({
   imageUrl,
@@ -27,7 +26,8 @@ export const CartoonComposition: React.FC<CartoonProps> = ({
   lrc,
 }) => {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
+  const { durationInFrames, width, height } = useVideoConfig();
+  const vertical = height > width; // 9:16 쇼츠
 
   /* 좌측 이미지 ken-burns 시퀀스
      한 사이클 7단계 (시계방향 4모서리 → 전체 → 중앙줌인 → 전체)
@@ -78,43 +78,89 @@ export const CartoonComposition: React.FC<CartoonProps> = ({
         <AbsoluteFill style={{ backgroundColor: "rgba(10,11,14,0.15)" }} />
       </AbsoluteFill>
 
-      {/* 좌측 1:1 이미지 + 우측 가사 */}
-      <AbsoluteFill
-        style={{
-          padding: "60px 50px 130px 60px",
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 60,
-        }}
-      >
-        {/* 좌측 1:1 — 880×880 라운드 */}
-        <div
+      {vertical ? (
+        /* ===== 세로(쇼츠) — 상단 정사각 이미지 + 하단 가사 ===== */
+        <AbsoluteFill
           style={{
-            width: 880,
-            height: 880,
-            borderRadius: 24,
-            overflow: "hidden",
-            boxShadow: "0 30px 80px rgba(0,0,0,0.6)",
-            flexShrink: 0,
+            padding: "70px 50px 150px 50px",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 44,
           }}
         >
-          <Img
-            src={imgSrc}
+          {/* 상단 정사각 (980×980 라운드) */}
+          <div
+            style={{
+              width: 980,
+              height: 980,
+              borderRadius: 28,
+              overflow: "hidden",
+              boxShadow: "0 30px 80px rgba(0,0,0,0.6)",
+              flexShrink: 0,
+            }}
+          >
+            <Img
+              src={imgSrc}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                transform: `scale(${zoom})`,
+                transformOrigin: `${originX * 100}% ${originY * 100}%`,
+              }}
+            />
+          </div>
+          {/* 하단 가사 — 활성 라인을 영역 상단 38% 부근에 */}
+          <div
             style={{
               width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              transform: `scale(${zoom})`,
-              transformOrigin: `${originX * 100}% ${originY * 100}%`,
+              flex: 1,
+              position: "relative",
+              overflow: "hidden",
             }}
-          />
-        </div>
+          >
+            <LyricsScroller lrc={lrc} centerOffset={250} align="center" />
+          </div>
+        </AbsoluteFill>
+      ) : (
+        /* ===== 가로(16:9) — 좌측 1:1 이미지 + 우측 가사 (승인 디자인) ===== */
+        <AbsoluteFill
+          style={{
+            padding: "60px 50px 130px 60px",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 60,
+          }}
+        >
+          {/* 좌측 1:1 — 880×880 라운드 */}
+          <div
+            style={{
+              width: 880,
+              height: 880,
+              borderRadius: 24,
+              overflow: "hidden",
+              boxShadow: "0 30px 80px rgba(0,0,0,0.6)",
+              flexShrink: 0,
+            }}
+          >
+            <Img
+              src={imgSrc}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                transform: `scale(${zoom})`,
+                transformOrigin: `${originX * 100}% ${originY * 100}%`,
+              }}
+            />
+          </div>
 
-        {/* 우측 가사 영역 */}
-        <div style={{ flex: 1, height: "100%", position: "relative", overflow: "hidden" }}>
-          <LyricsScroller lrc={lrc} />
-        </div>
-      </AbsoluteFill>
+          {/* 우측 가사 영역 */}
+          <div style={{ flex: 1, height: "100%", position: "relative", overflow: "hidden" }}>
+            <LyricsScroller lrc={lrc} />
+          </div>
+        </AbsoluteFill>
+      )}
 
       {/* 하단 타이틀 (그라디언트 제거 — 답답함 피드백. 가독성은 텍스트 그림자로) */}
       <AbsoluteFill
@@ -156,13 +202,16 @@ export const CartoonComposition: React.FC<CartoonProps> = ({
  * 라인이 바뀌는 시점에 spring()으로 이전 목표 위치 → 현재 목표 위치를
  * 보간하고, 색/크기도 같은 진행도(prog)로 부드럽게 전환한다.
  */
-const LyricsScroller: React.FC<{ lrc: CartoonProps["lrc"] }> = ({ lrc }) => {
+const LyricsScroller: React.FC<{
+  lrc: CartoonProps["lrc"];
+  centerOffset?: number;
+  align?: "left" | "center";
+}> = ({ lrc, centerOffset = 360, align = "left" }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  /* 한 라인 = 한국어 + 영어 두 줄 (\n) — 고정 높이 */
+  /* 한 라인 = 영어 + 한국어 두 줄 (\n) — 고정 높이 */
   const lineHeight = 120;
-  const centerOffset = 360; // 활성 라인을 약간 위쪽-중앙에 배치
 
   const tSec = frame / fps;
   const activeIdx = findActiveLrcIndex(lrc, tSec);
@@ -215,13 +264,16 @@ const LyricsScroller: React.FC<{ lrc: CartoonProps["lrc"] }> = ({ lrc }) => {
               style={{
                 height: lineHeight,
                 display: "flex",
-                alignItems: "center",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: align === "center" ? "center" : "flex-start",
+                textAlign: align,
                 fontSize,
                 fontWeight: activeness > 0.5 ? 700 : 500,
                 color,
                 lineHeight: 1.25,
                 whiteSpace: "pre-line",
-                paddingLeft: 8,
+                paddingLeft: align === "center" ? 0 : 8,
               }}
             >
               {line.text}

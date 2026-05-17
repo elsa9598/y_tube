@@ -73,7 +73,29 @@ function parseLrc(content) {
       merged.push({ t: ln.t, text: ln.text });
     }
   }
-  return merged;
+  /* 한국어 라인 + 바로 뒤 영어 라인(별도 타임스탬프)을 한 덩어리로 묶음.
+     사장님 JSON은 한/영을 각각 다른 시각으로 줌 → 따로 하이라이트되면
+     영어가 늦게 뜨고 음원과 어긋남.
+     → 영어(위) + 한국어(아래) 한 블록으로, 한국어(=실제 부르는) 시각에 동시 하이라이트. */
+  const hasHangul = (s) => /[가-힣]/.test(s);
+  const paired = [];
+  for (let i = 0; i < merged.length; i++) {
+    const cur = merged[i];
+    const next = merged[i + 1];
+    if (
+      next &&
+      hasHangul(cur.text) &&
+      !hasHangul(next.text) &&
+      next.t - cur.t <= 6
+    ) {
+      /* cur=한국어, next=영어 → 영어 위 / 한국어 아래, 시각은 한국어(더 이른) */
+      paired.push({ t: cur.t, text: next.text + "\n" + cur.text });
+      i++; // 영어 라인 소비
+    } else {
+      paired.push(cur);
+    }
+  }
+  return paired;
 }
 
 /** metadata.js(ESM export default) 또는 .json 파일 → 객체 */
@@ -113,6 +135,30 @@ function extractFirstFrame(mp4Path, outJpg) {
   );
 }
 
+/** 오디오의 [startSec, startSec+lenSec) 구간을 mp3로 잘라냄 (쇼츠용). */
+function trimAudioToMp3(srcPath, outMp3, startSec, lenSec) {
+  const ffmpeg = findBundledFfmpeg();
+  if (!ffmpeg) {
+    console.error("Remotion 번들 ffmpeg를 찾지 못했습니다 (node_modules/@remotion/compositor-*).");
+    process.exit(1);
+  }
+  /* -ss/-t 를 -i 뒤에 둬서 프레임 정확도 확보, libmp3lame 재인코딩 */
+  execFileSync(
+    ffmpeg,
+    [
+      "-y",
+      "-i", srcPath,
+      "-ss", String(startSec),
+      "-t", String(lenSec),
+      "-vn",
+      "-acodec", "libmp3lame",
+      "-q:a", "3",
+      outMp3,
+    ],
+    { stdio: "ignore" }
+  );
+}
+
 function parseArgs(argv) {
   const a = {};
   for (let i = 2; i < argv.length; i++) {
@@ -120,6 +166,9 @@ function parseArgs(argv) {
     if (k === "--folder") a.folder = argv[++i];
     else if (k === "--image") a.image = argv[++i];
     else if (k === "--mp3") a.mp3 = argv[++i];
+    else if (k === "--shorts") a.shorts = true;
+    else if (k === "--shorts-start") a.shortsStart = argv[++i];
+    else if (k === "--shorts-len") a.shortsLen = argv[++i];
     else if (k === "--mp4") a.mp4 = argv[++i];
     else if (k === "--lrc") a.lrc = argv[++i];
     else if (k === "--title") a.title = argv[++i];
@@ -216,18 +265,44 @@ if (!audioSrcPath || !existsSync(audioSrcPath)) {
   process.exit(1);
 }
 
-const lrcLines = parseLrc(lrcText);
-const lastLrcTime = lrcLines.length ? lrcLines[lrcLines.length - 1].t : 60;
-const durationSec = Math.ceil(lastLrcTime + 12);
+let lrcLines = parseLrc(lrcText);
+const fullLastLrc = lrcLines.length ? lrcLines[lrcLines.length - 1].t : 60;
+
+/* ===== 쇼츠: [start, start+len) 구간만 잘라 0초 기준으로 시프트 ===== */
+const isShorts = !!args.shorts;
+const shortsStart = Math.max(0, Number(args.shortsStart ?? 60) || 60);
+const shortsLen = Math.max(1, Number(args.shortsLen ?? 30) || 30);
+let durationSec;
+if (isShorts) {
+  const end = shortsStart + shortsLen;
+  /* 구간 시작 시점에 이미 떠 있어야 할 직전 라인을 0초로 고정 */
+  let carry = null;
+  for (const ln of lrcLines) {
+    if (ln.t <= shortsStart) carry = ln;
+    else break;
+  }
+  const win = lrcLines
+    .filter((ln) => ln.t > shortsStart && ln.t < end)
+    .map((ln) => ({ t: +(ln.t - shortsStart).toFixed(3), text: ln.text }));
+  if (carry) win.unshift({ t: 0, text: carry.text });
+  lrcLines = win;
+  durationSec = shortsLen;
+} else {
+  durationSec = Math.ceil(fullLastLrc + 12);
+}
 
 /* public/current/ 비우고 자산 배치 */
 rmSync(pubDir, { recursive: true, force: true });
 mkdirSync(pubDir, { recursive: true });
-const audioIsMp3 = /\.mp3$/i.test(audioSrcPath);
-const audDstName = audioIsMp3 ? "audio.mp3" : "audio.mp4";
+/* 쇼츠는 항상 mp3로 트림. 일반은 소스 확장자 유지 */
+const audDstName = isShorts || /\.mp3$/i.test(audioSrcPath) ? "audio.mp3" : "audio.mp4";
 const audDst = join(pubDir, audDstName);
 const imgDst = join(pubDir, "image.jpg");
-copyFileSync(audioSrcPath, audDst);
+if (isShorts) {
+  trimAudioToMp3(audioSrcPath, audDst, shortsStart, shortsLen);
+} else {
+  copyFileSync(audioSrcPath, audDst);
+}
 
 if (imageSrcPath && existsSync(imageSrcPath)) {
   /* 원본 이미지가 있으면 변형 없이 그대로 (jpg/png 무관, .jpg 이름으로) */
@@ -265,6 +340,11 @@ console.log(`   오디오: ${audioSrcPath}`);
 console.log(
   `   이미지: ${imageSrcPath && existsSync(imageSrcPath) ? imageSrcPath : "(mp4 첫 프레임 추출)"}`
 );
+console.log(`   포맷: ${isShorts ? `쇼츠 9:16 (${shortsStart}s~${shortsStart + shortsLen}s)` : "일반 16:9"}`);
 console.log(`   LRC 라인 수: ${lrcLines.length}`);
-console.log(`   추정 길이: ${durationSec}초 (LRC 마지막 ${lastLrcTime.toFixed(1)}초 + 12초)`);
+console.log(
+  `   길이: ${durationSec}초 ${
+    isShorts ? "(쇼츠 구간)" : `(LRC 마지막 ${fullLastLrc.toFixed(1)}초 + 12초)`
+  }`
+);
 console.log(`   타이틀: ${title}`);

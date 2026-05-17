@@ -43,6 +43,11 @@
   a.yt{display:inline-block;margin-top:12px;color:var(--accentSoft);font-weight:700;font-size:15px}
   .hide{display:none}
   .step{font-size:11px;letter-spacing:1.5px;color:var(--faint);font-weight:600;margin-bottom:10px}
+  .fmt{background:var(--surfaceAlt);border:1px solid var(--stroke);border-radius:10px;
+    padding:12px 14px;font-size:13.5px;cursor:pointer;display:flex;align-items:center;gap:8px}
+  .fmt:has(input:checked){border-color:var(--accentSoft);color:var(--txt)}
+  input[type=number]{width:100%;background:var(--surface);color:var(--txt);
+    border:1px solid var(--stroke);border-radius:10px;padding:12px 14px;font-size:14px}
 </style>
 </head>
 <body>
@@ -61,6 +66,15 @@
       <div class="pill" id="pImg">이미지 — 미선택</div>
       <div class="pill" id="pMp3">mp3 — 미선택</div>
       <div class="pill" id="pJson">json — 미선택</div>
+    </div>
+    <label>포맷</label>
+    <div style="display:flex;gap:10px">
+      <label class="fmt" style="flex:1"><input type="radio" name="fmt" value="normal" checked /> 일반 16:9</label>
+      <label class="fmt" style="flex:1"><input type="radio" name="fmt" value="shorts" /> 쇼츠 9:16 (30초)</label>
+    </div>
+    <div id="shortsOpt" class="hide" style="margin-top:10px">
+      <label>쇼츠 시작 지점 (초) — 이 시점부터 30초</label>
+      <input type="number" id="shortsStart" min="0" step="1" value="60" />
     </div>
     <div style="margin-top:16px">
       <button id="btnRender" disabled>렌더링 시작</button>
@@ -139,6 +153,14 @@ function handleFiles(list){
   }
 }
 
+/* ---- 포맷 선택 ---- */
+document.querySelectorAll('input[name=fmt]').forEach(r=>{
+  r.addEventListener("change", ()=>{
+    const shorts = document.querySelector('input[name=fmt]:checked').value === "shorts";
+    $("shortsOpt").classList.toggle("hide", !shorts);
+  });
+});
+
 /* ---- 렌더 ---- */
 $("btnRender").onclick = async () => {
   $("btnRender").disabled = true;
@@ -148,6 +170,9 @@ $("btnRender").onclick = async () => {
   fd.append("mp3", mp3File);
   fd.append("json", jsonFile);
   fd.append("title", $("title").value.trim());
+  const fmt = document.querySelector('input[name=fmt]:checked').value;
+  fd.append("mode", fmt);
+  if(fmt === "shorts") fd.append("shortsStart", $("shortsStart").value || "60");
   const r = await fetch("/render", { method:"POST", body:fd });
   const j = await r.json();
   if(!j.jobId){ $("rMsg").textContent = "오류: "+JSON.stringify(j); return; }

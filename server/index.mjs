@@ -103,6 +103,9 @@ async function processNext() {
         "--json",
         jsonPath,
         ...(job.title ? ["--title", job.title] : []),
+        ...(job.mode === "shorts"
+          ? ["--shorts", "--shorts-start", String(job.shortsStart ?? 60)]
+          : []),
         "--out",
         propsPath,
       ],
@@ -117,7 +120,7 @@ async function processNext() {
       [
         REMOTION_CLI,
         "render",
-        "Cartoon",
+        job.mode === "shorts" ? "Shorts" : "Cartoon",
         outPath,
         `--props=${propsPath}`,
         "--concurrency=4",
@@ -150,7 +153,11 @@ async function processNext() {
     job.outputSize = statSync(outPath).size;
     /* 곡 제목으로 D:\Claude_works\y_tube\out\ 에 자동 저장 */
     try {
-      const finalPath = join(OUT_DIR, safeName(job.title || id) + ".mp4");
+      const suffix = job.mode === "shorts" ? " [쇼츠]" : "";
+      const finalPath = join(
+        OUT_DIR,
+        safeName((job.title || id) + suffix) + ".mp4"
+      );
       copyFileSync(outPath, finalPath);
       job.savedPath = finalPath;
       console.log(`[job ${id}] 📁 저장: ${finalPath}`);
@@ -295,6 +302,9 @@ app.post(
 
     /* 제목: UI가 JSON.title 을 읽어 보냄. 없으면 gen-props가 JSON.title 사용 */
     const title = String(req.body?.title ?? "").trim();
+    /* 포맷: normal(16:9) | shorts(9:16, 기본 60초 지점부터 30초) */
+    const mode = req.body?.mode === "shorts" ? "shorts" : "normal";
+    const shortsStart = Math.max(0, Number(req.body?.shortsStart ?? 60) || 60);
 
     jobs.set(id, {
       state: "queued",
@@ -302,14 +312,20 @@ app.post(
       message: "대기 중",
       title,
       imageName,
+      mode,
+      shortsStart,
       createdAt: new Date().toISOString(),
     });
     enqueue(id);
 
     console.log(
-      `[job ${id}] queued — image ${(imageFile.size / 1024 / 1024).toFixed(
-        1
-      )}MB · mp3 ${(mp3File.size / 1024 / 1024).toFixed(1)}MB`
+      `[job ${id}] queued — ${mode}${
+        mode === "shorts" ? `@${shortsStart}s` : ""
+      } · image ${(imageFile.size / 1024 / 1024).toFixed(1)}MB · mp3 ${(
+        mp3File.size /
+        1024 /
+        1024
+      ).toFixed(1)}MB`
     );
     res.json({ jobId: id, state: "queued" });
   }
@@ -346,6 +362,11 @@ app.post("/upload/:id", (req, res) => {
       : "private",
   };
   if (!meta.title) return res.status(400).json({ error: "제목 필수" });
+
+  /* 쇼츠는 #Shorts 가 있어야 유튜브가 쇼츠로 분류 */
+  if (job.mode === "shorts" && !/#shorts/i.test(meta.description + meta.title)) {
+    meta.description = (meta.description ? meta.description + "\n\n" : "") + "#Shorts";
+  }
 
   job.upload = { state: "uploading", progress: 0, message: "준비 중", url: null };
   uploadToYouTube(job.outputPath, meta, (p, m) => {
