@@ -32,6 +32,8 @@ import {
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { uploadToYouTube } from "./youtube.mjs";
+import { suggestShortsStarts } from "./suggest.mjs";
+import { rmSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
@@ -328,6 +330,49 @@ app.post(
       ).toFixed(1)}MB`
     );
     res.json({ jobId: id, state: "queued" });
+  }
+);
+
+/**
+ * POST /suggest-shorts  (렌더 안 함 — 분석만)
+ *   multipart: mp3 (required), json (optional, lyrics 추출용)
+ *   응답: { suggestions: [{ start, label }] }  100% 로컬 분석
+ */
+app.post(
+  "/suggest-shorts",
+  upload.fields([
+    { name: "mp3", maxCount: 1 },
+    { name: "json", maxCount: 1 },
+  ]),
+  (req, res) => {
+    const mp3File = req.files?.mp3?.[0];
+    if (!mp3File) return res.status(400).json({ error: "mp3 파일 누락" });
+
+    let lrcText = "";
+    const jsonFile = req.files?.json?.[0];
+    if (jsonFile) {
+      try {
+        const meta = JSON.parse(jsonFile.buffer.toString("utf8"));
+        if (typeof meta?.lyrics === "string") lrcText = meta.lyrics;
+      } catch {}
+    }
+
+    const tmp = join(JOBS_DIR, `suggest-${randomUUID()}.mp3`);
+    try {
+      writeFileSync(tmp, mp3File.buffer);
+      const { suggestions } = suggestShortsStarts({
+        mp3Path: tmp,
+        lrcText,
+        remotionDir: REMOTION_DIR,
+      });
+      res.json({ suggestions });
+    } catch (e) {
+      res.json({ suggestions: [{ start: 60, label: "기본 60초" }], error: String(e.message ?? e) });
+    } finally {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {}
+    }
   }
 );
 

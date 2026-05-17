@@ -48,6 +48,11 @@
   .fmt:has(input:checked){border-color:var(--accentSoft);color:var(--txt)}
   input[type=number]{width:100%;background:var(--surface);color:var(--txt);
     border:1px solid var(--stroke);border-radius:10px;padding:12px 14px;font-size:14px}
+  button.ghost{background:var(--surfaceAlt);color:var(--txt);border:1px solid var(--stroke);
+    font-size:13.5px;font-weight:600;padding:11px 16px}
+  button.ghost:disabled{color:var(--faint)}
+  .chip{background:var(--surfaceAlt);border:1px solid var(--accentSoft);color:var(--txt);
+    border-radius:999px;padding:9px 15px;font-size:13px;font-weight:700;cursor:pointer;width:auto}
 </style>
 </head>
 <body>
@@ -75,6 +80,11 @@
     <div id="shortsOpt" class="hide" style="margin-top:10px">
       <label>쇼츠 시작 지점 (초) — 이 시점부터 30초</label>
       <input type="number" id="shortsStart" min="0" step="1" value="60" />
+      <button type="button" id="btnSuggest" class="ghost" style="margin-top:10px">🎯 추천 시작 지점 계산</button>
+      <div id="sugWrap" class="hide" style="margin-top:10px">
+        <div id="sugChips" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+        <div class="msg" id="sugMsg" style="margin-top:6px"></div>
+      </div>
     </div>
     <div style="margin-top:16px">
       <button id="btnRender" disabled>렌더링 시작</button>
@@ -160,6 +170,42 @@ document.querySelectorAll('input[name=fmt]').forEach(r=>{
     $("shortsOpt").classList.toggle("hide", !shorts);
   });
 });
+
+/* ---- 쇼츠 추천 시작 지점 (100% 로컬 분석) ---- */
+$("btnSuggest").onclick = async () => {
+  if(!mp3File){ alert("먼저 mp3 파일을 선택하세요"); return; }
+  const b = $("btnSuggest");
+  b.disabled = true; b.textContent = "🎯 분석 중... (음원·가사)";
+  $("sugWrap").classList.remove("hide");
+  $("sugChips").innerHTML = ""; $("sugMsg").textContent = "";
+  try{
+    const fd = new FormData();
+    fd.append("mp3", mp3File);
+    if(jsonFile) fd.append("json", jsonFile);
+    const r = await fetch("/suggest-shorts", { method:"POST", body:fd });
+    const j = await r.json();
+    const list = j.suggestions || [];
+    if(!list.length){ $("sugMsg").textContent = "추천 결과 없음"; return; }
+    for(const s of list){
+      const c = document.createElement("button");
+      c.type = "button"; c.className = "chip";
+      c.textContent = s.label + " 부터";
+      c.onclick = () => {
+        $("shortsStart").value = s.start;
+        [...$("sugChips").children].forEach(x=>x.style.outline="");
+        c.style.outline = "2px solid var(--accent)";
+      };
+      $("sugChips").appendChild(c);
+    }
+    $("sugMsg").textContent = jsonFile
+      ? "후렴(가사 반복) + 음원 에너지 기준. 칩을 누르면 시작초가 채워집니다."
+      : "음원 에너지 기준 (JSON 첨부 시 후렴까지 반영). 칩을 누르면 적용.";
+  }catch(e){
+    $("sugMsg").textContent = "분석 실패: " + e;
+  }finally{
+    b.disabled = false; b.textContent = "🎯 추천 시작 지점 계산";
+  }
+};
 
 /* ---- 렌더 ---- */
 $("btnRender").onclick = async () => {
