@@ -29,29 +29,52 @@ export const CartoonComposition: React.FC<CartoonProps> = ({
   const { durationInFrames, width, height } = useVideoConfig();
   const vertical = height > width; // 9:16 쇼츠
 
-  /* 좌측 이미지 ken-burns 시퀀스
-     한 사이클 7단계 (시계방향 4모서리 → 전체 → 중앙줌인 → 전체)
-     노래 길이 동안 3번 반복. */
-  const KEN_BURNS = [
-    { z: 1.5, ox: 0, oy: 0 },     // 1. 좌상 줌인
-    { z: 1.5, ox: 1, oy: 0 },     // 2. 우상 줌인
-    { z: 1.5, ox: 1, oy: 1 },     // 3. 우하 줌인
-    { z: 1.5, ox: 0, oy: 1 },     // 4. 좌하 줌인
-    { z: 1.0, ox: 0.5, oy: 0.5 }, // 5. 전체화면 줌아웃
-    { z: 1.5, ox: 0.5, oy: 0.5 }, // 6. 중앙 줌인
-    { z: 1.0, ox: 0.5, oy: 0.5 }, // 7. 전체 줌아웃
-  ];
-  const REPEAT = 3;
-  const totalSteps = KEN_BURNS.length * REPEAT;
-  const stepProg = (frame / Math.max(1, durationInFrames)) * totalSteps;
-  const stepIdx = Math.min(Math.floor(stepProg), totalSteps - 1);
-  const rawT = stepProg - stepIdx;
-  const t = rawT * rawT * (3 - 2 * rawT); // smoothstep ease-in-out
-  const fromK = KEN_BURNS[stepIdx % KEN_BURNS.length];
-  const toK = KEN_BURNS[(stepIdx + 1) % KEN_BURNS.length];
-  const zoom = fromK.z + (toK.z - fromK.z) * t;
-  const originX = fromK.ox + (toK.ox - fromK.ox) * t;
-  const originY = fromK.oy + (toK.oy - fromK.oy) * t;
+  /* 이미지 ken-burns.
+     - 가로(16:9): 기존 승인 시퀀스 7단계 × 3회 반복 (변경 금지) — 모듈로 순환.
+     - 세로(쇼츠): 30초 동안 네 모서리 한 바퀴 → 중앙 줌아웃, 반복 없음(느리게).
+       마지막 키프레임에서 정지(순환 X). */
+  let zoom: number, originX: number, originY: number;
+  if (vertical) {
+    const KB_SHORTS = [
+      { z: 1.5, ox: 0, oy: 0 },     // 좌상
+      { z: 1.5, ox: 1, oy: 0 },     // 우상
+      { z: 1.5, ox: 1, oy: 1 },     // 우하
+      { z: 1.5, ox: 0, oy: 1 },     // 좌하
+      { z: 1.5, ox: 0, oy: 0 },     // 좌상 복귀 (한 바퀴 완성)
+      { z: 1.0, ox: 0.5, oy: 0.5 }, // 중앙 줌아웃 (끝, 정지)
+    ];
+    const segs = KB_SHORTS.length - 1; // 순환 X → 마지막에서 멈춤
+    const sp = (frame / Math.max(1, durationInFrames)) * segs;
+    const idx = Math.min(Math.floor(sp), segs - 1);
+    const rawT = sp - idx;
+    const t = rawT * rawT * (3 - 2 * rawT);
+    const a = KB_SHORTS[idx];
+    const b = KB_SHORTS[idx + 1];
+    zoom = a.z + (b.z - a.z) * t;
+    originX = a.ox + (b.ox - a.ox) * t;
+    originY = a.oy + (b.oy - a.oy) * t;
+  } else {
+    const KEN_BURNS = [
+      { z: 1.5, ox: 0, oy: 0 },     // 1. 좌상 줌인
+      { z: 1.5, ox: 1, oy: 0 },     // 2. 우상 줌인
+      { z: 1.5, ox: 1, oy: 1 },     // 3. 우하 줌인
+      { z: 1.5, ox: 0, oy: 1 },     // 4. 좌하 줌인
+      { z: 1.0, ox: 0.5, oy: 0.5 }, // 5. 전체화면 줌아웃
+      { z: 1.5, ox: 0.5, oy: 0.5 }, // 6. 중앙 줌인
+      { z: 1.0, ox: 0.5, oy: 0.5 }, // 7. 전체 줌아웃
+    ];
+    const REPEAT = 3;
+    const totalSteps = KEN_BURNS.length * REPEAT;
+    const stepProg = (frame / Math.max(1, durationInFrames)) * totalSteps;
+    const stepIdx = Math.min(Math.floor(stepProg), totalSteps - 1);
+    const rawT = stepProg - stepIdx;
+    const t = rawT * rawT * (3 - 2 * rawT); // smoothstep ease-in-out
+    const fromK = KEN_BURNS[stepIdx % KEN_BURNS.length];
+    const toK = KEN_BURNS[(stepIdx + 1) % KEN_BURNS.length];
+    zoom = fromK.z + (toK.z - fromK.z) * t;
+    originX = fromK.ox + (toK.ox - fromK.ox) * t;
+    originY = fromK.oy + (toK.oy - fromK.oy) * t;
+  }
 
   /* http(s):// 또는 /로 시작하면 그대로 (외부 URL or absolute web path),
      그 외엔 public/ 의 정적 자산으로 해석 */
