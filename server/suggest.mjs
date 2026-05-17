@@ -158,8 +158,7 @@ export function suggestShortsStarts({
 }) {
   const fallback = { suggestions: [{ start: 60, label: "기본 60초" }] };
   try {
-    const lrcLines = lrcText ? parseLrcLines(lrcText) : [];
-    const chorusStart = lrcLines.length ? detectChorusStart(lrcLines) : null;
+    let lrcLines = lrcText ? parseLrcLines(lrcText) : [];
 
     const ffmpeg = findFfmpeg(remotionDir);
     let dur = 0;
@@ -172,6 +171,17 @@ export function suggestShortsStarts({
     /* 음원 길이를 모르면 가사 마지막 시각으로 추정 */
     if (!dur && lrcLines.length) dur = Math.ceil(lrcLines[lrcLines.length - 1].t + 6);
     if (!dur) return fallback;
+
+    /* 가사 타임이 음원보다 10%+ 길면 음원 길이에 맞게 선형 축소
+       (gen-props 와 동일 규칙 → 추천 위치가 실제 렌더와 일치) */
+    if (lrcLines.length) {
+      const last = lrcLines[lrcLines.length - 1].t;
+      if (last > dur * 1.1) {
+        const sc = (dur - 1.5) / last;
+        lrcLines = lrcLines.map((l) => ({ t: +(l.t * sc).toFixed(3), text: l.text }));
+      }
+    }
+    const chorusStart = lrcLines.length ? detectChorusStart(lrcLines) : null;
 
     const maxStart = Math.max(0, dur - lenSec);
 
