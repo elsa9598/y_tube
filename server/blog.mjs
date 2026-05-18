@@ -372,8 +372,21 @@ export async function postToNaverBlog(o) {
       .catch(() => {});
     await new Promise((r) => setTimeout(r, 1500));
 
-    /* 제목: 실제 클릭 + 키보드 타이핑 (SE-ONE 은 textContent 주입 무시) */
-    step("제목 입력 중...");
+    /* 클릭 → 전체선택 → 평문 붙여넣기. 타이핑은 서식(취소선 등) 오염되므로 X */
+    const pasteInto = async (el, value) => {
+      await el.click({ delay: 30 }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 300));
+      setWindowsClipboard(value);
+      await new Promise((r) => setTimeout(r, 250));
+      await page.keyboard.down("Control");
+      await page.keyboard.press("KeyA");
+      await page.keyboard.press("KeyV");
+      await page.keyboard.up("Control");
+      await new Promise((r) => setTimeout(r, 500));
+    };
+
+    /* 제목: 평문 붙여넣기 (SE-ONE 은 textContent 주입 무시) */
+    step("제목 입력(붙여넣기)...");
     let typedTitle = false;
     for (const sel of [
       ".se-section-documentTitle .se-text-paragraph",
@@ -383,16 +396,14 @@ export async function postToNaverBlog(o) {
     ]) {
       const el = await frame.$(sel).catch(() => null);
       if (el) {
-        await el.click({ delay: 30 }).catch(() => {});
-        await new Promise((r) => setTimeout(r, 400));
-        await page.keyboard.type(o.title, { delay: 12 }).catch(() => {});
+        await pasteInto(el, o.title);
         typedTitle = true;
         break;
       }
     }
 
-    /* 본문: 제목에서 Tab 또는 본문 영역 클릭 후 줄 단위 타이핑 */
-    step("본문 입력 중...");
+    /* 본문: 평문 붙여넣기 (줄바꿈 보존, 서식 오염 없음) */
+    step("본문 입력(붙여넣기)...");
     let typedBody = false;
     let bodyEl = null;
     for (const sel of [
@@ -404,13 +415,7 @@ export async function postToNaverBlog(o) {
       if (bodyEl) break;
     }
     if (bodyEl) {
-      await bodyEl.click({ delay: 30 }).catch(() => {});
-      await new Promise((r) => setTimeout(r, 400));
-      const lines = String(o.text).split(/\r?\n/);
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i]) await page.keyboard.type(lines[i], { delay: 6 });
-        if (i < lines.length - 1) await page.keyboard.press("Enter");
-      }
+      await pasteInto(bodyEl, o.text);
       typedBody = true;
     }
 
@@ -422,6 +427,9 @@ export async function postToNaverBlog(o) {
         (clipOk ? "(클립보드에 제목+본문 복사됨) " : "") +
         "이제 창에서 ① 카테고리 '오둥이 감성음악' ② 동영상 첨부 ③ 발행 을 마무리하세요. (10분간 창 유지)"
     );
+
+    /* 수동 보정용으로 제목+본문 다시 클립보드에 (붙여넣기 중 덮였으므로 복원) */
+    setWindowsClipboard(clipText);
 
     /* 사장님이 카테고리·영상·발행 마무리 — 창 10분 유지 */
     await new Promise((r) => setTimeout(r, 10 * 60 * 1000));
