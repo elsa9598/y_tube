@@ -64,7 +64,7 @@ async function ollamaGenerate(prompt, { timeoutMs = 120000 } = {}) {
         model: OLLAMA_MODEL,
         prompt,
         stream: false,
-        options: { temperature: 0.8, num_predict: 900 },
+        options: { temperature: 0.5, num_predict: 900 },
       }),
       signal: ctrl.signal,
     });
@@ -74,6 +74,37 @@ async function ollamaGenerate(prompt, { timeoutMs = 120000 } = {}) {
   } finally {
     clearTimeout(to);
   }
+}
+
+/* 한국어 순수성: 일본어 카나(ひらがな/カタカナ) 또는 한자(CJK) 가 있으면 false.
+   한글=가-힣, 한자=一-鿿, 카나=぀-ヿ */
+function isKoreanClean(s) {
+  return !/[぀-ヿ一-鿿㐀-䶿]/.test(s);
+}
+
+/* 한국어로만 나올 때까지 최대 maxTry 회 재생성 (qwen 언어 드리프트 방어) */
+async function ollamaKorean(buildPrompt, maxTry = 4) {
+  let last = "";
+  for (let i = 0; i < maxTry; i++) {
+    const strict =
+      i === 0
+        ? ""
+        : "\n\n‼️ 경고: 직전 출력에 한자/일본어가 섞였습니다. " +
+          "이번엔 한글과 기본 문장부호·이모지만 사용하세요. 한자(漢字)·일본어·중국어 단어 절대 금지.";
+    let out = "";
+    try {
+      out = await ollamaGenerate(buildPrompt(strict));
+    } catch {
+      out = "";
+    }
+    last = out;
+    if (out && isKoreanClean(out)) return out;
+  }
+  /* 끝까지 실패 → 한자/카나 줄만 제거하고 남은 한국어 라인만 사용 */
+  return last
+    .split(/\r?\n/)
+    .filter((l) => l.trim() && isKoreanClean(l))
+    .join("\n");
 }
 
 /**
@@ -91,27 +122,24 @@ export async function generateBlogDraft({
   const quote = pickQuote(ph, (topic || "") + songTitle);
   const category = "오둥이 감성음악";
 
-  const prompt =
-    `당신은 감성 음악 블로그 작가입니다. 아래 조건을 지켜 한국어 블로그 본문을 써주세요.\n\n` +
-    `[주제] ${topic}\n` +
-    `[철학자 관점] ${phName}\n` +
-    `[참고 명언] "${quote.line}" — ${phName}\n` +
-    `[연결할 노래] ${songTitle}\n\n` +
-    `요구사항:\n` +
-    `1) ${phName}의 사상으로 주제를 깊이 있게, 그러나 누구나 이해하기 쉽게 해석.\n` +
-    `2) 일상적인 짧은 이야기(스토리) 예시를 1개 들어 의미를 와닿게.\n` +
-    `3) 너무 무겁지 않게, 따뜻하고 감성적인 톤. 적재적소에 이모지 사용.\n` +
-    `4) **한 문장마다 줄바꿈**. 총 8~16줄(20줄 절대 넘기지 말 것). ` +
-    `제목/태그/머리말/번호 쓰지 말고 본문 문장만.\n` +
-    `5) 마지막 줄은 노래 "${songTitle}"를 들으며 마무리하는 한 문장.\n\n` +
-    `본문:`;
+  const buildPrompt = (strict) =>
+    `당신은 한국어 원어민 감성 에세이 작가입니다.\n` +
+    `‼️ 출력은 100% 한국어. 한자(漢字)·일본어·중국어 글자 절대 사용 금지. 영어 단어 최소화.\n\n` +
+    `이 글의 주제는 오직 다음 하나입니다 — 절대 다른 소재로 새지 마세요:\n` +
+    `★ 주제: "${topic}"\n\n` +
+    `이 주제를 ${phName}의 철학으로 풀어 씁니다.\n` +
+    `참고 명언: "${quote.line}" (${phName})\n\n` +
+    `규칙:\n` +
+    `1) 처음부터 끝까지 "${topic}" 에 대한 글이어야 함. 노래·동물·날씨 등 주제와 무관한 이야기로 빠지지 말 것.\n` +
+    `2) ${phName}의 사상으로 이 주제를 깊이 있게, 쉽게 해석.\n` +
+    `3) 주제에 맞는 일상적인 짧은 이야기 예시 1개.\n` +
+    `4) 따뜻하고 감성적인 톤, 이모지 적당히. 한 문장마다 줄바꿈, 총 8~16줄.\n` +
+    `5) 제목·태그·머리말·번호 쓰지 말고 본문 문장만.\n` +
+    `6) 마지막 한 줄만 노래 "${songTitle}"를 들으며 마무리.\n` +
+    strict +
+    `\n\n"${topic}" 에 대한 한국어 본문:`;
 
-  let raw = "";
-  try {
-    raw = await ollamaGenerate(prompt);
-  } catch (e) {
-    raw = "";
-  }
+  const raw = await ollamaKorean(buildPrompt);
 
   let bodyLines = raw
     .replace(/^본문\s*[:：]?\s*/i, "")
@@ -119,6 +147,9 @@ export async function generateBlogDraft({
     .map((l) => l.trim())
     .filter(Boolean)
     .filter((l) => !/^\[(제목|태그|본문)\]/.test(l))
+    .filter((l) => !/한국어 본문\s*[:：]?$/.test(l)) // 프롬프트 꼬리 에코 제거
+    .filter((l) => !/^[★▶]|^주제\s*[:：]/.test(l))
+    .filter(isKoreanClean) // 한자/일본어 섞인 줄 버림
     .slice(0, 20);
 
   if (bodyLines.length === 0) {
