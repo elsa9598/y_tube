@@ -53,9 +53,9 @@ function hashStr(s) {
 
 /* ===== 로컬 Ollama 호출 ===== */
 const OLLAMA = process.env.OLLAMA_URL || "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:7b";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:14b";
 
-async function ollamaGenerate(prompt, { timeoutMs = 120000 } = {}) {
+async function ollamaGenerate(prompt, { timeoutMs = 240000 } = {}) {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -168,7 +168,7 @@ export async function generateBlogDraft({
     const tg = await ollamaGenerate(
       `다음 블로그 주제에 어울리는 한국어 해시태그 10개만 쉼표로 구분해 출력. ` +
         `# 없이 단어만. 주제: "${topic}", 철학자: ${phName}, 노래: ${songTitle}`,
-      { timeoutMs: 60000 }
+      { timeoutMs: 120000 }
     );
     tags = tg
       .replace(/#/g, "")
