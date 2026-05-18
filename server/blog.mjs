@@ -6,9 +6,11 @@
  *   네이버는 자동화 탐지가 강함 → headful + userDataDir 로 세션 유지,
  *   캡차/2단계 인증은 첫 회 사장님이 직접(창이 떠 있음) 처리.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -224,6 +226,26 @@ function readEnv(key) {
   }
 }
 
+/* Windows 클립보드에 텍스트 복사 (에디터 자동입력 실패 시 Ctrl+V 안전장치) */
+function setWindowsClipboard(text) {
+  try {
+    const tmp = join(tmpdir(), `ytube_clip_${Date.now()}.txt`);
+    writeFileSync(tmp, text, "utf8");
+    execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 -LiteralPath '${tmp}')`,
+      ],
+      { stdio: "ignore" }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 네이버 블로그 글쓰기 자동화 (headful, 세션 유지).
  * SmartEditor ONE 은 버전 변동·iframe 으로 깨지기 쉬움 →
@@ -233,8 +255,8 @@ function readEnv(key) {
  */
 export async function postToNaverBlog(o) {
   const id = readEnv("NAVER_ID");
-  const pw = readEnv("NAVER_PW");
-  if (!id || !pw) throw new Error("D:/.env 에 NAVER_ID/NAVER_PW 없음");
+  if (!id) throw new Error("D:/.env 에 NAVER_ID 없음");
+  /* 자격증명 자동입력은 하지 않음(캡차 유발). 로그인은 사장님이 1회 수동. */
   const blogId = readEnv("NAVER_BLOG_ID") || id;
   const step = o.onStep || (() => {});
 
@@ -258,110 +280,152 @@ export async function postToNaverBlog(o) {
   if (!exe) throw new Error("Chrome/Edge 실행파일을 찾지 못했습니다");
 
   const userDataDir = join(__dirname, ".naver-profile");
-  step("브라우저 실행(세션 유지)...");
+  step("브라우저 실행(세션 유지·자동화 흔적 숨김)...");
   const browser = await puppeteer.launch({
     headless: false,
     executablePath: exe,
     userDataDir,
     defaultViewport: null,
-    args: ["--start-maximized", "--no-sandbox"],
+    /* 네이버 자동화 탐지 회피: --enable-automation 제거 + webdriver 숨김 */
+    ignoreDefaultArgs: ["--enable-automation"],
+    args: [
+      "--start-maximized",
+      "--no-sandbox",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-infobars",
+    ],
   });
+
+  /* 본문은 무조건 클립보드에 먼저 — 자동입력 막혀도 Ctrl+V 로 끝낼 수 있게 */
+  const clipText = `${o.title}\n\n${o.text}`;
+  const clipOk = setWindowsClipboard(clipText);
+
   try {
     const page = (await browser.pages())[0] || (await browser.newPage());
+    await page
+      .evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      })
+      .catch(() => {});
 
-    /* 로그인 상태 확인 */
+    /* 로그인 상태 확인 (세션 재사용) */
     await page.goto("https://www.naver.com", { waitUntil: "domcontentloaded" });
-    const loggedIn = await page
-      .$('a.MyView-module__link_logout, .MyView-module__nickname')
-      .then(Boolean)
+    let loggedIn = await page
+      .$eval("body", (b) => /로그아웃|MyView-module__nickname/.test(b.innerHTML))
       .catch(() => false);
 
     if (!loggedIn) {
-      step("네이버 로그인 시도(캡차/2단계는 창에서 직접 처리)...");
+      /* ⚠️ 자동 입력 금지 — 자동입력이 캡차/차단을 부른다.
+         사장님이 창에서 직접 1회 로그인(+캡차/2단계). 이후 세션 재사용 → 무인. */
+      step(
+        "🔑 열린 창에서 네이버에 직접 로그인하세요 (최초 1회만, 캡차 포함). 완료되면 자동 진행됩니다."
+      );
       await page.goto("https://nid.naver.com/nidlogin.login", {
         waitUntil: "domcontentloaded",
       });
-      /* 자동 입력 탐지 회피: 값 주입 + input 이벤트 */
-      await page.waitForSelector("#id", { timeout: 20000 });
-      await page.evaluate(
-        (uid, upw) => {
-          const set = (sel, v) => {
-            const el = document.querySelector(sel);
-            if (!el) return;
-            el.value = v;
-            el.dispatchEvent(new Event("input", { bubbles: true }));
-          };
-          set("#id", uid);
-          set("#pw", upw);
-        },
-        id,
-        pw
-      );
-      await page.click("#log\\.login").catch(() => {});
-      /* 로그인 성공(메인/블로그로 이동)까지 최대 3분 — 캡차/2단계 대기 */
-      await page
+      const ok = await page
         .waitForFunction(
-          () => /naver\.com\/?($|\?|#)/.test(location.href) &&
-            !location.href.includes("nidlogin"),
-          { timeout: 180000 }
+          () =>
+            !location.href.includes("nidlogin") &&
+            !location.href.includes("nid.naver.com"),
+          { timeout: 300000, polling: 1000 }
         )
-        .catch(() => {});
+        .then(() => true)
+        .catch(() => false);
+      if (!ok) {
+        step("로그인 미완료(5분 초과). 다시 시도해주세요.");
+        await new Promise((r) => setTimeout(r, 8000));
+        return { opened: true, typed: false, loggedIn: false };
+      }
+      step("로그인 완료 — 세션 저장됨(다음부터 로그인 생략).");
     } else {
-      step("기존 세션 로그인 상태 확인됨.");
+      step("기존 세션 로그인 확인됨(로그인 생략).");
     }
 
     /* 글쓰기 페이지 */
     step("블로그 글쓰기 창 여는 중...");
-    await page.goto(
-      `https://blog.naver.com/${blogId}?Redirect=Write&`,
-      { waitUntil: "domcontentloaded" }
-    );
-    await new Promise((r) => setTimeout(r, 4000));
+    await page.goto(`https://blog.naver.com/${blogId}?Redirect=Write&`, {
+      waitUntil: "domcontentloaded",
+    });
+    await new Promise((r) => setTimeout(r, 5000));
 
-    /* SmartEditor ONE 은 #mainFrame iframe 안 */
-    const frame =
-      page.frames().find((f) => f.url().includes("PostWriteForm")) ||
-      page
-        .frames()
-        .find((f) => /blog\.naver\.com/.test(f.url()) && f !== page.mainFrame()) ||
-      page.mainFrame();
+    /* SmartEditor ONE iframe 탐색 */
+    let frame = page
+      .frames()
+      .find((f) => /PostWriteForm|postwrite/i.test(f.url()));
+    if (!frame) {
+      const fEl = await page.$("iframe#mainFrame");
+      if (fEl) frame = await fEl.contentFrame();
+    }
+    if (!frame) frame = page.mainFrame();
+    await new Promise((r) => setTimeout(r, 2000));
 
-    /* 제목/본문 입력 시도 (셀렉터는 SE 버전따라 달라 best-effort) */
-    step("제목·본문 입력 시도...");
-    const typed = await frame
-      .evaluate((title, text) => {
-        const tEl =
-          document.querySelector(".se-title-text .se-text-paragraph") ||
-          document.querySelector('[contenteditable="true"]');
-        const bEls = document.querySelectorAll(
-          ".se-component.se-text .se-text-paragraph, [contenteditable='true']"
+    /* '작성 중인 글' 복구 팝업이 뜨면 취소 */
+    await frame
+      .evaluate(() => {
+        const btns = [...document.querySelectorAll("button, a")];
+        const cancel = btns.find((b) =>
+          /취소|새로 작성|닫기/.test(b.textContent || "")
         );
-        let ok = false;
-        if (tEl) {
-          tEl.textContent = title;
-          tEl.dispatchEvent(new Event("input", { bubbles: true }));
-          ok = true;
-        }
-        if (bEls && bEls.length) {
-          const body = bEls[bEls.length - 1];
-          body.textContent = text;
-          body.dispatchEvent(new Event("input", { bubbles: true }));
-          ok = true;
-        }
-        return ok;
-      }, o.title, o.text)
-      .catch(() => false);
+        if (cancel) cancel.click();
+      })
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 1500));
 
+    /* 제목: 실제 클릭 + 키보드 타이핑 (SE-ONE 은 textContent 주입 무시) */
+    step("제목 입력 중...");
+    let typedTitle = false;
+    for (const sel of [
+      ".se-section-documentTitle .se-text-paragraph",
+      ".se-documentTitle .se-text-paragraph",
+      ".se-placeholder.__se_placeholder",
+      ".se_textarea",
+    ]) {
+      const el = await frame.$(sel).catch(() => null);
+      if (el) {
+        await el.click({ delay: 30 }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 400));
+        await page.keyboard.type(o.title, { delay: 12 }).catch(() => {});
+        typedTitle = true;
+        break;
+      }
+    }
+
+    /* 본문: 제목에서 Tab 또는 본문 영역 클릭 후 줄 단위 타이핑 */
+    step("본문 입력 중...");
+    let typedBody = false;
+    let bodyEl = null;
+    for (const sel of [
+      ".se-section-text .se-text-paragraph",
+      ".se-component.se-text .se-text-paragraph",
+      ".se-content .se-text-paragraph",
+    ]) {
+      bodyEl = await frame.$(sel).catch(() => null);
+      if (bodyEl) break;
+    }
+    if (bodyEl) {
+      await bodyEl.click({ delay: 30 }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 400));
+      const lines = String(o.text).split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i]) await page.keyboard.type(lines[i], { delay: 6 });
+        if (i < lines.length - 1) await page.keyboard.press("Enter");
+      }
+      typedBody = true;
+    }
+
+    const typed = typedTitle && typedBody;
     step(
-      typed
-        ? "제목·본문 입력됨. 영상 첨부·카테고리·발행은 열린 창에서 확인/마무리하세요."
-        : "에디터 자동입력이 막혔습니다. 열린 창에 붙여넣기용 텍스트를 사용하세요."
+      (typed
+        ? "✅ 제목·본문 자동 입력됨. "
+        : "⚠️ 에디터 자동입력 일부 실패. 본문이 클립보드에 있으니 본문칸 클릭 후 Ctrl+V 하세요. ") +
+        (clipOk ? "(클립보드에 제목+본문 복사됨) " : "") +
+        "이제 창에서 ① 카테고리 '오둥이 감성음악' ② 동영상 첨부 ③ 발행 을 마무리하세요. (10분간 창 유지)"
     );
 
-    /* 사장님이 영상 첨부·카테고리(오둥이 감성음악)·발행을 창에서 마무리.
-       창을 닫지 않고 유지 → 5분 후 자동 종료(작업 끝나면 사장님이 닫아도 됨) */
-    await new Promise((r) => setTimeout(r, 5 * 60 * 1000));
-    return { opened: true, typed };
+    /* 사장님이 카테고리·영상·발행 마무리 — 창 10분 유지 */
+    await new Promise((r) => setTimeout(r, 10 * 60 * 1000));
+    return { opened: true, typed, loggedIn: true, clip: clipOk };
   } finally {
     await browser.close().catch(() => {});
   }
