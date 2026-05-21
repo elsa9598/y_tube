@@ -137,8 +137,14 @@
       <label class="fmt" style="flex:1"><input type="radio" name="phil" value="nietzsche" checked /> 니체</label>
       <label class="fmt" style="flex:1"><input type="radio" name="phil" value="schopenhauer" /> 쇼펜하우어</label>
     </div>
-    <div style="margin-top:14px">
-      <button class="ghost" id="btnDraft">📝 AI 초안 생성 (로컬)</button>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="ghost" id="btnDraft" style="flex:1">📝 AI 초안 생성 (로컬 14b)</button>
+      <button class="ghost" id="btnPrompt" style="flex:1">📋 프롬프트 복사 (외부 채팅용)</button>
+    </div>
+    <div id="promptWrap" class="hide" style="margin-top:10px">
+      <label>외부 채팅에 붙여넣을 프롬프트 (클립보드에 자동 복사됨)</label>
+      <textarea id="promptText" style="min-height:140px" readonly></textarea>
+      <div class="msg">이 프롬프트를 ChatGPT/Claude 등에 붙여넣어 답을 받은 뒤, <b>아래 본문 칸에 그 답을 붙여넣으세요.</b> 제목·카테고리·명언은 자동으로 채워집니다.</div>
     </div>
     <div id="draftWrap" class="hide" style="margin-top:14px">
       <label>제목</label>
@@ -396,6 +402,28 @@ async function pollUpload(){
 }
 
 /* ---- 네이버 블로그 ---- */
+$("btnPrompt").onclick = async () => {
+  const topic = $("bTopic").value.trim();
+  if(!topic){ alert("주제를 입력하세요"); return; }
+  const phil = document.querySelector('input[name=phil]:checked').value;
+  try{
+    const r = await fetch("/blog/prompt", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jobId, topic, philosopher: phil })
+    });
+    const j = await r.json();
+    if(j.error){ alert("실패: "+j.error); return; }
+    $("promptText").value = j.prompt;
+    $("promptWrap").classList.remove("hide");
+    $("bTitle").value = j.title;
+    $("bText").value = ""; // 외부 답변을 사장님이 직접 채울 곳
+    $("bMeta").textContent = "카테고리: "+j.category+" · "+j.phName+" 명언: "+j.quote.line+"  · 외부 답변을 받아 본문칸에 붙여넣으세요";
+    $("draftWrap").classList.remove("hide");
+    try{ await navigator.clipboard.writeText(j.prompt); $("bMsg").textContent = "✅ 프롬프트가 클립보드에 복사됐습니다. ChatGPT/Claude에 붙여넣으세요."; }
+    catch{ $("bMsg").textContent = "위 텍스트 박스에서 직접 복사하세요."; }
+  }catch(e){ alert("오류: "+e); }
+};
+
 $("btnDraft").onclick = async () => {
   const topic = $("bTopic").value.trim();
   if(!topic){ alert("주제를 입력하세요"); return; }

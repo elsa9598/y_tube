@@ -66,7 +66,13 @@ async function ollamaGenerate(prompt, { timeoutMs = 240000 } = {}) {
         model: OLLAMA_MODEL,
         prompt,
         stream: false,
-        options: { temperature: 0.5, num_predict: 900 },
+        options: {
+          temperature: 0.75,
+          top_p: 0.9,
+          top_k: 40,
+          repeat_penalty: 1.1,
+          num_predict: 1100,
+        },
       }),
       signal: ctrl.signal,
     });
@@ -78,10 +84,10 @@ async function ollamaGenerate(prompt, { timeoutMs = 240000 } = {}) {
   }
 }
 
-/* 한국어 순수성: 일본어 카나(ひらがな/カタカナ) 또는 한자(CJK) 가 있으면 false.
-   한글=가-힣, 한자=一-鿿, 카나=぀-ヿ */
+/* 한국어 순수성: 카나/한자/CJK extension + **키릴(Ѐ-ӿ)** 검출.
+   qwen 이 가끔 봅시"다"→봅시"ла" 등 키릴 글자로 새는 경우 있음. */
 function isKoreanClean(s) {
-  return !/[぀-ヿ一-鿿㐀-䶿]/.test(s);
+  return !/[぀-ヿ一-鿿㐀-䶿Ѐ-ӿ]/.test(s);
 }
 
 /* 한국어로만 나올 때까지 최대 maxTry 회 재생성 (qwen 언어 드리프트 방어) */
@@ -125,19 +131,21 @@ export async function generateBlogDraft({
   const category = "오둥이 감성음악";
 
   const buildPrompt = (strict) =>
-    `당신은 한국어 원어민 감성 에세이 작가입니다.\n` +
+    `당신은 한국어 원어민 감성 에세이 작가입니다. 따뜻하고 깊이 있는 문장을 씁니다.\n` +
     `‼️ 출력은 100% 한국어. 한자(漢字)·일본어·중국어 글자 절대 사용 금지. 영어 단어 최소화.\n\n` +
     `이 글의 주제는 오직 다음 하나입니다 — 절대 다른 소재로 새지 마세요:\n` +
     `★ 주제: "${topic}"\n\n` +
-    `이 주제를 ${phName}의 철학으로 풀어 씁니다.\n` +
-    `참고 명언: "${quote.line}" (${phName})\n\n` +
-    `규칙:\n` +
-    `1) 처음부터 끝까지 "${topic}" 에 대한 글이어야 함. 노래·동물·날씨 등 주제와 무관한 이야기로 빠지지 말 것.\n` +
-    `2) ${phName}의 사상으로 이 주제를 깊이 있게, 쉽게 해석.\n` +
-    `3) 주제에 맞는 일상적인 짧은 이야기 예시 1개.\n` +
-    `4) 따뜻하고 감성적인 톤, 이모지 적당히. 한 문장마다 줄바꿈, 총 8~16줄.\n` +
-    `5) 제목·태그·머리말·번호 쓰지 말고 본문 문장만.\n` +
-    `6) 마지막 한 줄만 노래 "${songTitle}"를 들으며 마무리.\n` +
+    `참고 명언: "${quote.line}" — ${phName}\n` +
+    `연결할 노래(마지막 줄만): "${songTitle}"\n\n` +
+    `글쓰기 지침:\n` +
+    `1) 처음부터 끝까지 "${topic}" 에 대한 글. 다른 소재(동물·날씨·노래)로 빠지지 말 것.\n` +
+    `2) ${phName}의 사상으로 주제를 깊이 있게, 그러나 쉽게 풀어내기.\n` +
+    `3) 추상적 단어("자아·존재·진정한") 대신 **구체적 장면과 감각**(빛, 온기, 소리, 사물, 손끝의 촉감)을 곁들여라.\n` +
+    `4) 주제에 맞는 짧은 일상 일화 1개를 자연스럽게 본문에 녹여 넣어라(예시처럼 따로 떼지 말 것).\n` +
+    `5) 따뜻하고 감성적인 톤. 이모지는 단락당 0~1개로 자연스럽게.\n` +
+    `6) 짧은 단락(2~3문장)으로 자연스럽게 단락을 나누되, 전체 14~20줄.\n` +
+    `7) 제목·태그·머리말·번호는 쓰지 말고 본문만.\n` +
+    `8) 마지막 한 줄은 노래 "${songTitle}"를 들으며 마무리하는 **한 문장**(완결된 문장, 단순히 노래 제목만 적지 말 것).\n` +
     strict +
     `\n\n"${topic}" 에 대한 한국어 본문:`;
 
@@ -201,6 +209,37 @@ export async function generateBlogDraft({
   const title = `${emoji} ${songTitle}`;
 
   return { title, bodyLines, tags, quote, philosopher: ph, category, phName };
+}
+
+/** 외부 채팅(ChatGPT·Claude 등)에 붙여넣기용 프롬프트 + 메타.
+    시스템은 호출 안 함 — 사장님이 직접 붙여넣어 답을 받아 본문에 붙여넣음. */
+export function composeBlogPrompt({ topic, philosopher, songTitle }) {
+  const ph = philosopher === "schopenhauer" ? "schopenhauer" : "nietzsche";
+  const phName = QUOTES[ph].label;
+  const quote = pickQuote(ph, (topic || "") + songTitle);
+  const category = "오둥이 감성음악";
+  const emoji = ["🎵", "🌙", "✨", "🍃", "☕"][Math.abs(hashStr(songTitle)) % 5];
+  const title = `${emoji} ${songTitle}`;
+
+  const prompt =
+    `당신은 한국어 원어민 감성 에세이 작가입니다. 따뜻하고 깊이 있는 톤으로 써주세요.\n` +
+    `‼️ 출력은 100% 한국어. 한자(漢字)·일본어 사용 금지.\n\n` +
+    `이 글의 주제는 오직 다음 하나입니다 — 다른 소재로 새지 마세요:\n` +
+    `★ 주제: "${topic}"\n\n` +
+    `[철학자 관점] ${phName}\n` +
+    `[참고 명언] "${quote.line}" — ${phName}\n` +
+    `[연결할 노래] ${songTitle}\n\n` +
+    `요구사항:\n` +
+    `1) ${phName}의 사상으로 "${topic}" 을 깊이 있고 누구나 이해하기 쉽게 해석.\n` +
+    `2) 추상적 단어보다 구체적 장면·감각(빛·온기·소리·사물)을 곁들이세요.\n` +
+    `3) 주제에 맞는 일상적 짧은 이야기 예시 1개를 자연스럽게 녹여 넣기.\n` +
+    `4) 따뜻하고 감성적인 톤, 적재적소에 이모지 사용. 너무 무겁지 않게.\n` +
+    `5) 짧은 단락(2~3문장)으로 자연스럽게 나누되 총 20줄 이내.\n` +
+    `6) 제목/태그/머리말/번호 쓰지 말고 본문 문장만 출력.\n` +
+    `7) 마지막 한 줄은 노래 "${songTitle}"를 들으며 마무리하는 **완결된 한 문장**(노래 제목만 적지 말 것).\n\n` +
+    `"${topic}" 에 대한 본문:`;
+
+  return { prompt, title, quote, phName, category };
 }
 
 /** 최종 게시 본문 텍스트(평문) — 명언 + 본문 + 노래 + 출처 */

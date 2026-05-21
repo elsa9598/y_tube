@@ -33,7 +33,12 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { uploadToYouTube } from "./youtube.mjs";
 import { suggestShortsStarts } from "./suggest.mjs";
-import { generateBlogDraft, composeBlogText, postToNaverBlog } from "./blog.mjs";
+import {
+  generateBlogDraft,
+  composeBlogText,
+  postToNaverBlog,
+  composeBlogPrompt,
+} from "./blog.mjs";
 import { rmSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -242,36 +247,9 @@ function runCmd(cmd, args, cwd, onStdoutLine) {
 const app = express();
 app.use(cors());
 
-/* 🔒 외부(ngrok) 노출 보호 — ID/PW Basic 인증.
-   .env(D:\.env) 의 WEB_USER / WEB_PASS 사용. 둘 다 없으면 잠금 해제(로컬 전용 모드). */
-let WEB_USER = "",
-  WEB_PASS = "";
-try {
-  const env = readFileSync("D:/.env", "utf8");
-  const ge = (k) => {
-    const m = env.match(new RegExp("^" + k + '=\\"?([^\\"\\r\\n]+)', "m"));
-    return m ? m[1].trim() : "";
-  };
-  WEB_USER = ge("WEB_USER");
-  WEB_PASS = ge("WEB_PASS");
-} catch {}
-if (WEB_USER && WEB_PASS) {
-  app.use((req, res, next) => {
-    const h = req.headers.authorization || "";
-    const dec = Buffer.from(h.split(" ")[1] || "", "base64").toString();
-    const i = dec.indexOf(":");
-    if (dec.slice(0, i) === WEB_USER && dec.slice(i + 1) === WEB_PASS) {
-      return next();
-    }
-    res
-      .set("WWW-Authenticate", 'Basic realm="y_tube"')
-      .status(401)
-      .end("인증이 필요합니다");
-  });
-  console.log("🔒 Basic 인증 활성 (WEB_USER/WEB_PASS)");
-} else {
-  console.log("⚠️  WEB_USER/WEB_PASS 없음 — 인증 없이 전체 공개 (로컬 전용으로만 쓰세요)");
-}
+/* 로컬 데스크탑 전용 — Basic 인증 제거 (사장님 결정 2026-05-18, ngrok 미사용).
+   다시 외부 노출할 일 있으면 그때 가드 다시 추가. */
+console.log("🖥  로컬 데스크탑 전용 모드 (인증 없음)");
 
 app.use(express.json({ limit: "1mb" }));
 /* 로컬 웹 UI (server/public/index.html) */
@@ -433,6 +411,24 @@ app.post("/blog/draft", async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: String(e.message ?? e) });
   }
+});
+
+/**
+ * POST /blog/prompt  { jobId?, songTitle?, topic, philosopher }
+ *   외부 채팅(ChatGPT·Claude 등)에 붙여넣을 프롬프트 + 메타 반환.
+ *   시스템은 외부 호출 안 함 — 클립보드 복사용.
+ */
+app.post("/blog/prompt", (req, res) => {
+  const topic = String(req.body?.topic ?? "").trim();
+  if (!topic) return res.status(400).json({ error: "주제(topic) 필수" });
+  const philosopher =
+    req.body?.philosopher === "schopenhauer" ? "schopenhauer" : "nietzsche";
+  const job = req.body?.jobId ? jobs.get(req.body.jobId) : null;
+  const songTitle =
+    String(req.body?.songTitle ?? "").trim() ||
+    (job && job.title) ||
+    "오둥이의 노래";
+  res.json(composeBlogPrompt({ topic, philosopher, songTitle }));
 });
 
 /**
